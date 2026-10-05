@@ -65,6 +65,20 @@ export default function AdminLayout() {
       />
 
       <Tabs.Screen
+        name="resources"
+        options={{
+          title: 'Resources',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons
+              name="cube-outline"
+              size={size}
+              color={color}
+            />
+          ),
+        }}
+      />
+
+      <Tabs.Screen
         name="analytics"
         options={{
           title: 'Analytics',

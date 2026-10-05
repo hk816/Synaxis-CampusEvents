@@ -1,64 +1,207 @@
+import { supabase } from '@/lib/supabase';
 import { colors } from '@/theme/colors';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import {
-    Alert,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View
 } from 'react-native';
 
-const event = {
-  title: 'Campus Innovation Summit',
-  category: 'Technology',
-  status: 'Approved',
-  date: 'September 18, 2026',
-  time: '10:00 AM – 4:00 PM',
-  location: 'Main Auditorium',
-  description:
-    'A campus-wide innovation event bringing students together to explore ideas, technology, entrepreneurship, and emerging solutions.',
-  capacity: 100,
-  registered: 58,
-  waitlisted: 4,
+type EventData = {
+  id: string;
+  title: string;
+  category: string | null;
+  status: string;
+  start_at: string;
+  end_at: string;
+  location: string | null;
+  description: string | null;
+  capacity: number;
 };
 
-const resources = [
-  {
-    name: 'Auditorium',
-    person: 'Rahul Sharma',
-    status: 'Approved',
-  },
-  {
-    name: 'Projector & AV System',
-    person: 'Priya Nair',
-    status: 'Approved',
-  },
-  {
-    name: 'Photography Equipment',
-    person: 'Sneha Reddy',
-    status: 'Pending',
-  },
-];
+type ResourceData = {
+  id: string;
+  resource_name: string;
+  responsible_person: string;
+  status: string;
+};
+
+type ApprovalData = {
+  id: string;
+  status: string;
+  comments: string | null;
+  reviewed_at: string | null;
+};
 
 export default function OrganizerEventDetails() {
+  const params = useLocalSearchParams<{ eventId?: string; id?: string }>();
+  const eventId = typeof params.eventId === 'string'
+    ? params.eventId
+    : typeof params.id === 'string'
+      ? params.id
+      : undefined;
+
+  const [event, setEvent] = useState<EventData | null>(null);
+  const [resources, setResources] = useState<ResourceData[]>([]);
+  const [approval, setApproval] = useState<ApprovalData | null>(null);
+  const [registeredCount, setRegisteredCount] = useState(0);
+  const [waitlistedCount, setWaitlistedCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  useEffect(() => {
+    loadEventDetails();
+  }, [eventId]);
+
+  const loadEventDetails = async () => {
+    if (!eventId) {
+      setErrorMessage('Event ID is missing.');
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setErrorMessage('');
+
+      const [
+        eventResult,
+        resourcesResult,
+        approvalResult,
+        registrationsResult,
+        waitlistResult,
+      ] = await Promise.all([
+        supabase
+          .from('events')
+          .select(
+            'id,title,category,status,start_at,end_at,location,description,capacity'
+          )
+          .eq('id', eventId)
+          .single(),
+
+        supabase
+          .from('event_resources')
+          .select('id,resource_name,responsible_person,status')
+          .eq('event_id', eventId)
+          .order('requested_at', { ascending: false }),
+
+        supabase
+          .from('event_approvals')
+          .select('id,status,comments,reviewed_at')
+          .eq('event_id', eventId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+
+        supabase
+          .from('event_registrations')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', eventId)
+          .eq('status', 'registered'),
+
+        supabase
+          .from('event_waitlist')
+          .select('id', { count: 'exact', head: true })
+          .eq('event_id', eventId)
+          .eq('status', 'waiting'),
+      ]);
+
+      if (eventResult.error) throw eventResult.error;
+      if (resourcesResult.error) throw resourcesResult.error;
+      if (approvalResult.error) throw approvalResult.error;
+      if (registrationsResult.error) throw registrationsResult.error;
+      if (waitlistResult.error) throw waitlistResult.error;
+
+      setEvent(eventResult.data as EventData);
+      setResources((resourcesResult.data ?? []) as ResourceData[]);
+      setApproval((approvalResult.data ?? null) as ApprovalData | null);
+      setRegisteredCount(registrationsResult.count ?? 0);
+      setWaitlistedCount(waitlistResult.count ?? 0);
+    } catch (error: any) {
+      console.error('Organizer event details error:', error);
+      setErrorMessage(error?.message ?? 'Unable to load event details.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatDate = (value: string) =>
+    new Date(value).toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+
+  const formatTime = (start: string, end: string) => {
+    const options: Intl.DateTimeFormatOptions = {
+      hour: 'numeric',
+      minute: '2-digit',
+    };
+
+    return `${new Date(start).toLocaleTimeString('en-IN', options)} – ${new Date(
+      end
+    ).toLocaleTimeString('en-IN', options)}`;
+  };
+
+  const titleCase = (value: string) =>
+    value.charAt(0).toUpperCase() + value.slice(1);
+
   const registrationPercentage =
-    (event.registered / event.capacity) * 100;
+    event && event.capacity > 0
+      ? (registeredCount / event.capacity) * 100
+      : 0;
 
   const handleEdit = () => {
-    Alert.alert(
-      'Edit Event',
-      'Event editing will be connected to the backend later.'
-    );
+    if (!event?.id) return;
+
+    router.push({
+      pathname: '/edit-event',
+      params: { eventId: event.id },
+    });
   };
 
   const handleUpdate = () => {
-    Alert.alert(
-      'Event Update',
-      'Event updates will be sent to registered students once backend notifications are connected.'
-    );
+    if (!event?.id) return;
+
+    router.push({
+      pathname: '/send-event-update',
+      params: { eventId: event.id },
+    });
   };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingScreen}>
+        <ActivityIndicator size="large" color={colors.navy} />
+        <Text style={styles.loadingText}>Loading event details...</Text>
+      </View>
+    );
+  }
+
+  if (!event) {
+    return (
+      <View style={styles.loadingScreen}>
+        <Ionicons
+          name="alert-circle-outline"
+          size={30}
+          color={colors.danger}
+        />
+        <Text style={styles.loadingTitle}>Unable to load event</Text>
+        <Text style={styles.loadingText}>
+          {errorMessage || 'Event not found.'}
+        </Text>
+
+        <Pressable style={styles.retryButton} onPress={loadEventDetails}>
+          <Text style={styles.retryText}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
@@ -66,7 +209,6 @@ export default function OrganizerEventDetails() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
       >
-        {/* Header */}
         <View style={styles.header}>
           <Pressable
             style={styles.backButton}
@@ -93,36 +235,34 @@ export default function OrganizerEventDetails() {
           </Pressable>
         </View>
 
-        {/* Event Hero */}
         <View style={styles.heroCard}>
           <View style={styles.categoryBadge}>
             <Text style={styles.categoryText}>
-              {event.category}
+              {event.category || 'General'}
             </Text>
           </View>
 
           <View style={styles.statusBadge}>
             <View style={styles.statusDot} />
             <Text style={styles.statusText}>
-              {event.status}
+              {titleCase(event.status)}
             </Text>
           </View>
 
           <Text style={styles.eventTitle}>{event.title}</Text>
 
           <Text style={styles.eventDescription}>
-            {event.description}
+            {event.description || 'No description provided.'}
           </Text>
         </View>
 
-        {/* Event Information */}
         <Text style={styles.sectionTitle}>Event information</Text>
 
         <View style={styles.infoCard}>
           <InfoRow
             icon="calendar-outline"
             label="Date"
-            value={event.date}
+            value={formatDate(event.start_at)}
           />
 
           <View style={styles.divider} />
@@ -130,7 +270,7 @@ export default function OrganizerEventDetails() {
           <InfoRow
             icon="time-outline"
             label="Time"
-            value={event.time}
+            value={formatTime(event.start_at, event.end_at)}
           />
 
           <View style={styles.divider} />
@@ -138,11 +278,10 @@ export default function OrganizerEventDetails() {
           <InfoRow
             icon="location-outline"
             label="Venue"
-            value={event.location}
+            value={event.location || 'Venue not specified'}
           />
         </View>
 
-        {/* Registration Overview */}
         <Text style={styles.sectionTitle}>
           Registration overview
         </Text>
@@ -156,7 +295,7 @@ export default function OrganizerEventDetails() {
 
               <View style={styles.registrationNumberRow}>
                 <Text style={styles.registrationNumber}>
-                  {event.registered}
+                  {registeredCount}
                 </Text>
 
                 <Text style={styles.registrationCapacity}>
@@ -179,10 +318,7 @@ export default function OrganizerEventDetails() {
               style={[
                 styles.progressFill,
                 {
-                  width: `${Math.min(
-                    registrationPercentage,
-                    100
-                  )}%`,
+                  width: `${Math.min(registrationPercentage, 100)}%`,
                 },
               ]}
             />
@@ -194,7 +330,7 @@ export default function OrganizerEventDetails() {
             </Text>
 
             <Text style={styles.registrationSubtext}>
-              {event.capacity - event.registered} spots left
+              {Math.max(event.capacity - registeredCount, 0)} spots left
             </Text>
           </View>
 
@@ -206,19 +342,18 @@ export default function OrganizerEventDetails() {
             />
 
             <Text style={styles.waitlistText}>
-              {event.waitlisted} student
-              {event.waitlisted === 1 ? '' : 's'} currently on
-              the waitlist.
+              {waitlistedCount} student
+              {waitlistedCount === 1 ? '' : 's'} currently on the waitlist.
             </Text>
           </View>
         </View>
 
-        {/* Resources */}
         <View style={styles.sectionHeader}>
           <View>
             <Text style={styles.sectionTitle}>
               Resources & approvals
             </Text>
+
             <Text style={styles.sectionSubtitle}>
               Resources associated with this event
             </Text>
@@ -231,52 +366,112 @@ export default function OrganizerEventDetails() {
           </View>
         </View>
 
-        {resources.map((resource) => (
-          <View
-            key={resource.name}
-            style={styles.resourceCard}
-          >
-            <View style={styles.resourceIcon}>
-              <Ionicons
-                name="cube-outline"
-                size={19}
-                color={colors.navy}
-              />
-            </View>
-
-            <View style={styles.resourceInfo}>
-              <Text style={styles.resourceName}>
-                {resource.name}
-              </Text>
-
-              <Text style={styles.resourcePerson}>
-                Responsible: {resource.person}
-              </Text>
-            </View>
-
-            <View
-              style={[
-                styles.resourceStatus,
-                resource.status === 'Approved'
-                  ? styles.approvedBackground
-                  : styles.pendingBackground,
-              ]}
-            >
-              <Text
-                style={[
-                  styles.resourceStatusText,
-                  resource.status === 'Approved'
-                    ? styles.approvedText
-                    : styles.pendingText,
-                ]}
-              >
-                {resource.status}
-              </Text>
-            </View>
+        {resources.length === 0 ? (
+          <View style={styles.emptyResourceCard}>
+            <Ionicons
+              name="cube-outline"
+              size={22}
+              color={colors.textMuted}
+            />
+            <Text style={styles.emptyResourceText}>
+              No resources have been added for this event.
+            </Text>
           </View>
-        ))}
+        ) : (
+          resources.map((resource) => {
+            const normalizedStatus = resource.status.toLowerCase();
 
-        {/* Management */}
+            return (
+              <View
+                key={resource.id}
+                style={styles.resourceCard}
+              >
+                <View style={styles.resourceIcon}>
+                  <Ionicons
+                    name="cube-outline"
+                    size={19}
+                    color={colors.navy}
+                  />
+                </View>
+
+                <View style={styles.resourceInfo}>
+                  <Text style={styles.resourceName}>
+                    {resource.resource_name}
+                  </Text>
+
+                  <Text style={styles.resourcePerson}>
+                    Responsible: {resource.responsible_person}
+                  </Text>
+                </View>
+
+                <View
+                  style={[
+                    styles.resourceStatus,
+                    normalizedStatus === 'approved'
+                      ? styles.approvedBackground
+                      : normalizedStatus === 'rejected'
+                        ? styles.rejectedBackground
+                        : styles.pendingBackground,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.resourceStatusText,
+                      normalizedStatus === 'approved'
+                        ? styles.approvedText
+                        : normalizedStatus === 'rejected'
+                          ? styles.rejectedText
+                          : styles.pendingText,
+                    ]}
+                  >
+                    {titleCase(normalizedStatus)}
+                  </Text>
+                </View>
+              </View>
+            );
+          })
+        )}
+
+        <Text style={styles.sectionTitle}>Approval</Text>
+
+        <View style={styles.approvalCard}>
+          <View style={styles.approvalIcon}>
+            <Ionicons
+              name={
+                event.status === 'approved'
+                  ? 'checkmark-circle-outline'
+                  : event.status === 'rejected'
+                    ? 'close-circle-outline'
+                    : 'time-outline'
+              }
+              size={21}
+              color={
+                event.status === 'approved'
+                  ? colors.success
+                  : event.status === 'rejected'
+                    ? colors.danger
+                    : colors.warning
+              }
+            />
+          </View>
+
+          <View style={styles.approvalTextContainer}>
+            <Text style={styles.approvalTitle}>
+              {approval
+                ? `${titleCase(approval.status)} by Admin`
+                : `Current status: ${titleCase(event.status)}`}
+            </Text>
+
+            <Text style={styles.approvalText}>
+              {approval?.comments
+                ? approval.comments
+                : approval?.reviewed_at
+                  ? `Reviewed on ${formatDate(approval.reviewed_at)}.`
+                  : 'No Admin approval comment has been recorded yet.'}
+            </Text>
+          </View>
+        </View>
+
         <Text style={styles.sectionTitle}>Event management</Text>
 
         <View style={styles.managementCard}>
@@ -313,7 +508,12 @@ export default function OrganizerEventDetails() {
 
           <Pressable
             style={styles.managementRow}
-            onPress={() => router.push('/participants')}
+            onPress={() =>
+              router.push({
+                pathname: '/participants',
+                params: { eventId: event.id },
+              })
+            }
           >
             <View style={styles.managementIcon}>
               <Ionicons
@@ -371,26 +571,6 @@ export default function OrganizerEventDetails() {
             />
           </Pressable>
         </View>
-
-        {/* Approval note */}
-        <View style={styles.approvalNote}>
-          <Ionicons
-            name="shield-checkmark-outline"
-            size={20}
-            color={colors.success}
-          />
-
-          <View style={styles.approvalTextContainer}>
-            <Text style={styles.approvalTitle}>
-              Event approval status
-            </Text>
-
-            <Text style={styles.approvalText}>
-              This event has been approved by Admin and is
-              available to students.
-            </Text>
-          </View>
-        </View>
       </ScrollView>
     </View>
   );
@@ -424,6 +604,80 @@ function InfoRow({
 }
 
 const styles = StyleSheet.create({
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+
+  loadingTitle: {
+    color: colors.navy,
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 12,
+  },
+
+  loadingText: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 17,
+  },
+
+  retryButton: {
+    backgroundColor: colors.navy,
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    marginTop: 15,
+  },
+
+  retryText: {
+    color: colors.white,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  emptyResourceCard: {
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 23,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+
+  emptyResourceText: {
+    color: colors.textMuted,
+    fontSize: 10,
+    marginTop: 7,
+    textAlign: 'center',
+  },
+
+  approvalCard: {
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 23,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+
+  approvalIcon: {
+    width: 39,
+    height: 39,
+    borderRadius: 12,
+    backgroundColor: '#EEF1F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
   screen: {
     flex: 1,
     backgroundColor: colors.cream,

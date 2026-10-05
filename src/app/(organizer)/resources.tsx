@@ -1,79 +1,102 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    Pressable,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useToast } from '../../components/AppToast';
 import { supabase } from '../../lib/supabase';
 import { colors } from '../../theme/colors';
-
-type Resource = {
-  id: string;
-  event_id: string;
-  resource_name: string;
-  responsible_person: string;
-  status: 'pending' | 'approved' | 'rejected';
-  event?: {
-    id: string;
-    title: string;
-  } | null;
-};
 
 type EventItem = {
   id: string;
   title: string;
 };
 
-export default function OrganizerResourcesScreen() {
-  const [resources, setResources] = useState<Resource[]>([]);
-  const [events, setEvents] = useState<EventItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [modalVisible, setModalVisible] = useState(false);
+type ResourceStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected';
 
-  const [eventId, setEventId] = useState('');
-  const [resourceName, setResourceName] = useState('');
+type ResourceItem = {
+  id: string;
+  event_id: string;
+  resource_name: string;
+  responsible_person: string;
+  status: ResourceStatus;
+  requested_at: string;
+  rejection_reason?: string | null;
+};
+
+export default function OrganizerResources() {
+  const { showToast } = useToast();
+
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [resources, setResources] = useState<ResourceItem[]>([]);
+
+  const [selectedEvent, setSelectedEvent] =
+    useState<string | null>(null);
+
+  const [resourceName, setResourceName] =
+    useState('');
+
   const [responsiblePerson, setResponsiblePerson] =
     useState('');
-  const [saving, setSaving] = useState(false);
 
-  const loadResources = async () => {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] =
+    useState(false);
+
+  const loadData = useCallback(async () => {
     try {
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) return;
+      if (!user) {
+        throw new Error('You must be logged in.');
+      }
 
       const { data: eventData, error: eventError } =
         await supabase
           .from('events')
           .select('id, title')
           .eq('organizer_id', user.id)
-          .order('created_at', {
+          .order('start_at', {
             ascending: false,
           });
 
-      if (eventError) throw eventError;
+      if (eventError) {
+        throw eventError;
+      }
 
-      setEvents(eventData ?? []);
+      const eventList =
+        (eventData ?? []) as EventItem[];
 
-      if (!eventData?.length) {
+      setEvents(eventList);
+
+      if (
+        !selectedEvent &&
+        eventList.length > 0
+      ) {
+        setSelectedEvent(eventList[0].id);
+      }
+
+      if (eventList.length === 0) {
         setResources([]);
         return;
       }
 
-      const eventIds = eventData.map(
-        (event) => event.id
+      const eventIds = eventList.map(
+        event => event.id
       );
 
       const {
@@ -81,133 +104,410 @@ export default function OrganizerResourcesScreen() {
         error: resourceError,
       } = await supabase
         .from('event_resources')
-        .select(
-          `
-          id,
-          event_id,
-          resource_name,
-          responsible_person,
-          status
-        `
-        )
+        .select('*')
         .in('event_id', eventIds)
-        .order('created_at', {
+        .order('requested_at', {
           ascending: false,
         });
 
-      if (resourceError) throw resourceError;
-
-      const eventMap = new Map(
-        eventData.map((event) => [
-          event.id,
-          event,
-        ])
-      );
+      if (resourceError) {
+        throw resourceError;
+      }
 
       setResources(
-        (resourceData ?? []).map((resource) => ({
-          ...resource,
-          event:
-            eventMap.get(resource.event_id) ?? null,
-        }))
+        (resourceData ?? []) as ResourceItem[]
       );
-    } catch (error) {
+    } catch (error: any) {
       console.error(
-        'Load resources error:',
+        'Organizer resources error:',
         error
+      );
+
+      showToast(
+        error?.message ||
+          'Unable to load resources.',
+        'error'
       );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  }, [selectedEvent, showToast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadData();
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      loadResources();
-    }, [])
-  );
-
   const addResource = async () => {
-    if (
-      !eventId ||
-      !resourceName.trim() ||
-      !responsiblePerson.trim()
-    ) {
-      Alert.alert(
-        'Missing information',
-        'Please select an event and enter all resource details.'
+    const name = resourceName.trim();
+    const person = responsiblePerson.trim();
+
+    if (!selectedEvent) {
+      showToast(
+        'Please select an event.',
+        'warning'
       );
       return;
     }
 
-    setSaving(true);
+    if (!name) {
+      showToast(
+        'Enter the resource you need.',
+        'warning'
+      );
+      return;
+    }
+
+    if (!person) {
+      showToast(
+        'Enter the responsible person.',
+        'warning'
+      );
+      return;
+    }
 
     try {
+      setSaving(true);
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        throw new Error(
+          'You must be logged in.'
+        );
+      }
+
+      const selected = events.find(
+        event => event.id === selectedEvent
+      );
+
+      if (!selected) {
+        throw new Error(
+          'Selected event was not found.'
+        );
+      }
+
       const { error } = await supabase
         .from('event_resources')
         .insert({
-          event_id: eventId,
-          resource_name: resourceName.trim(),
-          responsible_person:
-            responsiblePerson.trim(),
+          event_id: selectedEvent,
+          resource_name: name,
+          responsible_person: person,
           status: 'pending',
         });
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
 
-      Alert.alert(
-        'Resource Added',
-        'The resource has been submitted for approval.'
-      );
-
-      setEventId('');
       setResourceName('');
       setResponsiblePerson('');
-      setModalVisible(false);
 
-      await loadResources();
+      showToast(
+        'Resource request submitted.',
+        'success'
+      );
+
+      await loadData();
     } catch (error: any) {
-      Alert.alert(
-        'Unable to add resource',
-        error?.message ??
-          'Something went wrong.'
+      console.error(
+        'Add resource error:',
+        error
+      );
+
+      showToast(
+        error?.message ||
+          'Unable to submit resource request.',
+        'error'
       );
     } finally {
       setSaving(false);
     }
   };
 
-  const statusStyle = (status: string) => {
-    if (status === 'approved') {
-      return {
-        backgroundColor: '#E2F2E9',
-        color: colors.success,
-      };
-    }
-
-    if (status === 'rejected') {
-      return {
-        backgroundColor: '#FBE5E5',
-        color: colors.danger,
-      };
-    }
-
-    return {
-      backgroundColor: '#FFF0D4',
-      color: colors.warning,
-    };
+  const getEventName = (eventId: string) => {
+    return (
+      events.find(
+        event => event.id === eventId
+      )?.title ?? 'Event'
+    );
   };
 
-  const renderResource = ({
-    item,
-  }: {
-    item: Resource;
-  }) => {
-    const status = statusStyle(item.status);
-
+  if (loading) {
     return (
-      <View style={styles.card}>
-        <View style={styles.iconBox}>
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator
+          size="large"
+          color={colors.yellowDark}
+        />
+
+        <Text style={styles.loadingText}>
+          Loading resources...
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.yellowDark}
+          />
+        }
+      >
+        <View style={styles.header}>
+          <View style={styles.headerText}>
+            <Text style={styles.title}>
+              Resources
+            </Text>
+
+            <Text style={styles.subtitle}>
+              Request and track resources for
+              your events
+            </Text>
+          </View>
+
+          <View style={styles.headerIcon}>
+            <Ionicons
+              name="cube-outline"
+              size={25}
+              color={colors.navy}
+            />
+          </View>
+        </View>
+
+        {events.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Ionicons
+              name="calendar-clear-outline"
+              size={42}
+              color={colors.textMuted}
+            />
+
+            <Text style={styles.emptyTitle}>
+              No events yet
+            </Text>
+
+            <Text style={styles.emptyText}>
+              Create an event before requesting
+              resources.
+            </Text>
+          </View>
+        ) : (
+          <>
+            <View style={styles.formCard}>
+              <Text style={styles.formTitle}>
+                New Resource Request
+              </Text>
+
+              <Text style={styles.label}>
+                Event
+              </Text>
+
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={
+                  false
+                }
+                contentContainerStyle={
+                  styles.eventSelector
+                }
+              >
+                {events.map(event => {
+                  const active =
+                    selectedEvent === event.id;
+
+                  return (
+                    <Pressable
+                      key={event.id}
+                      onPress={() =>
+                        setSelectedEvent(
+                          event.id
+                        )
+                      }
+                      style={[
+                        styles.eventChip,
+                        active &&
+                          styles.eventChipActive,
+                      ]}
+                    >
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.eventChipText,
+                          active &&
+                            styles.eventChipTextActive,
+                        ]}
+                      >
+                        {event.title}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <Text style={styles.label}>
+                Resource
+              </Text>
+
+              <View style={styles.inputBox}>
+                <Ionicons
+                  name="cube-outline"
+                  size={19}
+                  color={colors.textMuted}
+                />
+
+                <TextInput
+                  value={resourceName}
+                  onChangeText={setResourceName}
+                  placeholder="e.g. Projector & AV System"
+                  placeholderTextColor={
+                    colors.textMuted
+                  }
+                  style={styles.input}
+                />
+              </View>
+
+              <Text style={styles.label}>
+                Responsible Person
+              </Text>
+
+              <View style={styles.inputBox}>
+                <Ionicons
+                  name="person-outline"
+                  size={19}
+                  color={colors.textMuted}
+                />
+
+                <TextInput
+                  value={responsiblePerson}
+                  onChangeText={
+                    setResponsiblePerson
+                  }
+                  placeholder="Person obtaining approval"
+                  placeholderTextColor={
+                    colors.textMuted
+                  }
+                  style={styles.input}
+                />
+              </View>
+
+              <View style={styles.notice}>
+                <Ionicons
+                  name="information-circle-outline"
+                  size={19}
+                  color={colors.yellowDark}
+                />
+
+                <Text style={styles.noticeText}>
+                  The organizer is responsible for
+                  personally obtaining any required
+                  approval or consent for this
+                  resource.
+                </Text>
+              </View>
+
+              <Pressable
+                disabled={saving}
+                onPress={addResource}
+                style={[
+                  styles.submitButton,
+                  saving &&
+                    styles.submitButtonDisabled,
+                ]}
+              >
+                {saving ? (
+                  <ActivityIndicator
+                    color={colors.navy}
+                  />
+                ) : (
+                  <>
+                    <Ionicons
+                      name="add"
+                      size={21}
+                      color={colors.navy}
+                    />
+
+                    <Text
+                      style={
+                        styles.submitButtonText
+                      }
+                    >
+                      Submit Request
+                    </Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+
+            <Text style={styles.sectionTitle}>
+              Resource Requests
+            </Text>
+
+            {resources.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <Ionicons
+                  name="file-tray-outline"
+                  size={38}
+                  color={colors.textMuted}
+                />
+
+                <Text style={styles.emptyTitle}>
+                  No resource requests
+                </Text>
+
+                <Text style={styles.emptyText}>
+                  Resource requests you submit will
+                  appear here.
+                </Text>
+              </View>
+            ) : (
+              resources.map(resource => (
+                <ResourceCard
+                  key={resource.id}
+                  resource={resource}
+                  eventName={getEventName(
+                    resource.event_id
+                  )}
+                />
+              ))
+            )}
+          </>
+        )}
+
+        <View style={{ height: 30 }} />
+      </ScrollView>
+    </View>
+  );
+}
+
+function ResourceCard({
+  resource,
+  eventName,
+}: {
+  resource: ResourceItem;
+  eventName: string;
+}) {
+  const status =
+    resource.status ?? 'pending';
+
+  return (
+    <View style={styles.resourceCard}>
+      <View style={styles.resourceTop}>
+        <View style={styles.resourceIcon}>
           <Ionicons
             name="cube-outline"
             size={21}
@@ -215,251 +515,74 @@ export default function OrganizerResourcesScreen() {
           />
         </View>
 
-        <View style={styles.cardContent}>
+        <View style={styles.resourceInfo}>
           <Text style={styles.resourceName}>
-            {item.resource_name}
+            {resource.resource_name}
           </Text>
 
-          <Text style={styles.eventName}>
-            {item.event?.title ??
-              'Event unavailable'}
+          <Text
+            style={styles.eventName}
+            numberOfLines={1}
+          >
+            {eventName}
           </Text>
+        </View>
 
-          <View style={styles.personRow}>
-            <Ionicons
-              name="person-outline"
-              size={13}
-              color={colors.textSecondary}
-            />
-
-            <Text style={styles.personText}>
-              {item.responsible_person}
-            </Text>
-          </View>
-
-          <View
+        <View
+          style={[
+            styles.statusBadge,
+            status === 'approved' &&
+              styles.approvedBadge,
+            status === 'rejected' &&
+              styles.rejectedBadge,
+            status === 'pending' &&
+              styles.pendingBadge,
+          ]}
+        >
+          <Text
             style={[
-              styles.statusBadge,
-              {
-                backgroundColor:
-                  status.backgroundColor,
-              },
+              styles.statusText,
+              status === 'approved' &&
+                styles.approvedText,
+              status === 'rejected' &&
+                styles.rejectedText,
+              status === 'pending' &&
+                styles.pendingText,
             ]}
           >
-            <Text
-              style={[
-                styles.statusText,
-                { color: status.color },
-              ]}
-            >
-              {item.status.toUpperCase()}
-            </Text>
-          </View>
+            {status.charAt(0).toUpperCase() +
+              status.slice(1)}
+          </Text>
         </View>
       </View>
-    );
-  };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>
-            ORGANIZER SPACE
-          </Text>
-
-          <Text style={styles.title}>
-            Resources
-          </Text>
-
-          <Text style={styles.subtitle}>
-            Track resources and their approval status.
-          </Text>
-        </View>
-
-        <Pressable
-          style={styles.addButton}
-          onPress={() => setModalVisible(true)}
-        >
-          <Ionicons
-            name="add"
-            size={22}
-            color={colors.navy}
-          />
-        </Pressable>
-      </View>
-
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator
-            size="large"
-            color={colors.yellowDark}
-          />
-        </View>
-      ) : (
-        <FlatList
-          data={resources}
-          keyExtractor={(item) => item.id}
-          renderItem={renderResource}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.list,
-            resources.length === 0 &&
-              styles.emptyList,
-          ]}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Ionicons
-                  name="cube-outline"
-                  size={30}
-                  color={colors.textSecondary}
-                />
-              </View>
-
-              <Text style={styles.emptyTitle}>
-                No resources added
-              </Text>
-
-              <Text style={styles.emptyText}>
-                Add resources required for your events
-                and track their approval status here.
-              </Text>
-
-              <Pressable
-                style={styles.emptyButton}
-                onPress={() =>
-                  setModalVisible(true)
-                }
-              >
-                <Text style={styles.emptyButtonText}>
-                  Add Resource
-                </Text>
-              </Pressable>
-            </View>
-          }
+      <View style={styles.personRow}>
+        <Ionicons
+          name="person-outline"
+          size={16}
+          color={colors.textMuted}
         />
-      )}
 
-      <Modal
-        visible={modalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() =>
-          setModalVisible(false)
-        }
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modal}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>
-                  Add Resource
-                </Text>
+        <Text style={styles.personText}>
+          Responsible: {
+            resource.responsible_person
+          }
+        </Text>
+      </View>
 
-                <Text style={styles.modalSubtitle}>
-                  Submit a resource for approval.
-                </Text>
-              </View>
+      {status === 'rejected' &&
+      resource.rejection_reason ? (
+        <View style={styles.rejectionBox}>
+          <Text style={styles.rejectionLabel}>
+            Reason
+          </Text>
 
-              <Pressable
-                onPress={() =>
-                  setModalVisible(false)
-                }
-              >
-                <Ionicons
-                  name="close"
-                  size={24}
-                  color={colors.navy}
-                />
-              </Pressable>
-            </View>
-
-            <Text style={styles.label}>
-              EVENT
-            </Text>
-
-            <FlatList
-              horizontal
-              data={events}
-              keyExtractor={(item) => item.id}
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={
-                styles.eventSelector
-              }
-              renderItem={({ item }) => (
-                <Pressable
-                  style={[
-                    styles.eventChip,
-                    eventId === item.id &&
-                      styles.eventChipSelected,
-                  ]}
-                  onPress={() =>
-                    setEventId(item.id)
-                  }
-                >
-                  <Text
-                    style={[
-                      styles.eventChipText,
-                      eventId === item.id &&
-                        styles.eventChipTextSelected,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {item.title}
-                  </Text>
-                </Pressable>
-              )}
-            />
-
-            <Text style={styles.label}>
-              RESOURCE NAME
-            </Text>
-
-            <TextInput
-              value={resourceName}
-              onChangeText={setResourceName}
-              placeholder="e.g. Projector"
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-            />
-
-            <Text style={styles.label}>
-              RESPONSIBLE PERSON
-            </Text>
-
-            <TextInput
-              value={responsiblePerson}
-              onChangeText={setResponsiblePerson}
-              placeholder="e.g. Event Coordinator"
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-            />
-
-            <Text style={styles.note}>
-              Resources are submitted as pending and
-              require approval.
-            </Text>
-
-            <Pressable
-              style={styles.saveButton}
-              onPress={addResource}
-              disabled={saving}
-            >
-              {saving ? (
-                <ActivityIndicator
-                  color={colors.navy}
-                />
-              ) : (
-                <Text style={styles.saveText}>
-                  Submit Resource
-                </Text>
-              )}
-            </Pressable>
-          </View>
+          <Text style={styles.rejectionText}>
+            {resource.rejection_reason}
+          </Text>
         </View>
-      </Modal>
-    </SafeAreaView>
+      ) : null}
+    </View>
   );
 }
 
@@ -469,268 +592,305 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
   },
 
-  header: {
-    paddingHorizontal: 22,
-    paddingTop: 10,
-    paddingBottom: 15,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  content: {
+    padding: 20,
+    paddingTop: 28,
   },
 
-  eyebrow: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.2,
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.cream,
+  },
+
+  loadingText: {
+    marginTop: 12,
     color: colors.textSecondary,
+  },
+
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 22,
+  },
+
+  headerText: {
+    flex: 1,
+    paddingRight: 15,
   },
 
   title: {
-    fontSize: 28,
+    fontSize: 29,
     fontWeight: '800',
     color: colors.navy,
-    marginTop: 3,
   },
 
   subtitle: {
-    fontSize: 13,
+    marginTop: 5,
+    fontSize: 14,
     color: colors.textSecondary,
-    marginTop: 4,
   },
 
-  addButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
+  headerIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 15,
     backgroundColor: colors.yellow,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  list: {
-    paddingHorizontal: 22,
-    paddingBottom: 30,
-  },
-
-  emptyList: {
-    flexGrow: 1,
-  },
-
-  card: {
+  formCard: {
     backgroundColor: colors.white,
-    borderRadius: 17,
-    padding: 15,
-    marginBottom: 12,
+    borderRadius: 20,
+    padding: 18,
     borderWidth: 1,
     borderColor: colors.border,
-    flexDirection: 'row',
   },
 
-  iconBox: {
-    width: 46,
-    height: 46,
-    borderRadius: 14,
-    backgroundColor: colors.cream,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  cardContent: {
-    flex: 1,
-    marginLeft: 12,
-  },
-
-  resourceName: {
-    fontSize: 15,
+  formTitle: {
+    fontSize: 18,
     fontWeight: '800',
     color: colors.navy,
-  },
-
-  eventName: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: colors.textSecondary,
-    marginTop: 3,
-  },
-
-  personRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 8,
-  },
-
-  personText: {
-    fontSize: 11,
-    color: colors.textSecondary,
-  },
-
-  statusBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    borderRadius: 12,
-    marginTop: 8,
-  },
-
-  statusText: {
-    fontSize: 9,
-    fontWeight: '800',
-  },
-
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-
-  empty: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 35,
-  },
-
-  emptyIcon: {
-    width: 66,
-    height: 66,
-    borderRadius: 22,
-    backgroundColor: colors.white,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-
-  emptyTitle: {
-    fontSize: 19,
-    fontWeight: '800',
-    color: colors.navy,
-  },
-
-  emptyText: {
-    fontSize: 13,
-    lineHeight: 19,
-    textAlign: 'center',
-    color: colors.textSecondary,
-    marginTop: 7,
-  },
-
-  emptyButton: {
-    backgroundColor: colors.yellow,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    marginTop: 18,
-  },
-
-  emptyButtonText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.navy,
-  },
-
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(20, 33, 61, 0.35)',
-    justifyContent: 'flex-end',
-  },
-
-  modal: {
-    backgroundColor: colors.cream,
-    borderTopLeftRadius: 25,
-    borderTopRightRadius: 25,
-    padding: 22,
-    paddingBottom: 30,
-  },
-
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 20,
-  },
-
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: colors.navy,
-  },
-
-  modalSubtitle: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    marginTop: 3,
+    marginBottom: 18,
   },
 
   label: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
+    fontSize: 12,
+    fontWeight: '700',
     color: colors.textSecondary,
-    marginBottom: 7,
-    marginTop: 10,
+    marginBottom: 8,
+    marginTop: 8,
   },
 
   eventSelector: {
     gap: 8,
-    paddingBottom: 3,
+    paddingBottom: 8,
   },
 
   eventChip: {
-    maxWidth: 180,
-    paddingHorizontal: 13,
-    paddingVertical: 10,
-    borderRadius: 20,
-    backgroundColor: colors.white,
+    maxWidth: 190,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: colors.white,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
   },
 
-  eventChipSelected: {
+  eventChipActive: {
     backgroundColor: colors.navy,
     borderColor: colors.navy,
   },
 
   eventChipText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    color: colors.textSecondary,
+    color: colors.navy,
   },
 
-  eventChipTextSelected: {
+  eventChipTextActive: {
     color: colors.white,
   },
 
-  input: {
-    height: 48,
-    backgroundColor: colors.white,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    fontSize: 13,
-    color: colors.navy,
+  inputBox: {
+    minHeight: 52,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: colors.border,
+    backgroundColor: '#FCFBF7',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 13,
+    marginBottom: 10,
   },
 
-  note: {
-    fontSize: 11,
-    color: colors.textSecondary,
-    lineHeight: 16,
-    marginTop: 12,
+  input: {
+    flex: 1,
+    marginLeft: 9,
+    fontSize: 14,
+    color: colors.navy,
   },
 
-  saveButton: {
-    height: 50,
-    backgroundColor: colors.yellow,
+  notice: {
+    marginTop: 10,
     borderRadius: 13,
+    backgroundColor: '#FFF7DE',
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+
+  noticeText: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 11,
+    lineHeight: 17,
+    color: colors.textSecondary,
+  },
+
+  submitButton: {
+    height: 52,
+    borderRadius: 14,
+    marginTop: 16,
+    backgroundColor: colors.yellow,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 17,
+    flexDirection: 'row',
+    gap: 7,
   },
 
-  saveText: {
-    fontSize: 13,
+  submitButtonDisabled: {
+    opacity: 0.6,
+  },
+
+  submitButtonText: {
+    fontSize: 14,
     fontWeight: '800',
     color: colors.navy,
+  },
+
+  sectionTitle: {
+    marginTop: 27,
+    marginBottom: 12,
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.navy,
+  },
+
+  resourceCard: {
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
+    marginBottom: 11,
+  },
+
+  resourceTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  resourceIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: '#FFF1C9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  resourceInfo: {
+    flex: 1,
+    marginLeft: 11,
+    marginRight: 7,
+  },
+
+  resourceName: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.navy,
+  },
+
+  eventName: {
+    marginTop: 3,
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+
+  statusBadge: {
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 9,
+  },
+
+  approvedBadge: {
+    backgroundColor: '#E8F4EC',
+  },
+
+  rejectedBadge: {
+    backgroundColor: '#FDECEC',
+  },
+
+  pendingBadge: {
+    backgroundColor: '#FFF4D4',
+  },
+
+  statusText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+
+  approvedText: {
+    color: colors.success,
+  },
+
+  rejectedText: {
+    color: colors.danger,
+  },
+
+  pendingText: {
+    color: colors.warning,
+  },
+
+  personRow: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  personText: {
+    marginLeft: 6,
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+
+  rejectionBox: {
+    marginTop: 12,
+    borderRadius: 11,
+    padding: 11,
+    backgroundColor: '#FDECEC',
+  },
+
+  rejectionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: colors.danger,
+  },
+
+  rejectionText: {
+    marginTop: 4,
+    fontSize: 11,
+    lineHeight: 16,
+    color: colors.textSecondary,
+  },
+
+  emptyCard: {
+    minHeight: 170,
+    borderRadius: 18,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 25,
+  },
+
+  emptyTitle: {
+    marginTop: 11,
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.navy,
+  },
+
+  emptyText: {
+    marginTop: 5,
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+    color: colors.textSecondary,
   },
 });

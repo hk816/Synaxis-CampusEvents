@@ -58,18 +58,16 @@ export default function StudentHomeScreen() {
         return;
       }
 
-      // -----------------------------------------
-      // Load actual logged-in student's profile
-      // -----------------------------------------
-
-      const { data: profile, error: profileError } =
-        await supabase
-          .from('profiles')
-          .select(
-            'full_name, role, profile_completed'
-          )
-          .eq('id', user.id)
-          .single();
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
+        .from('profiles')
+        .select(
+          'full_name, role, profile_completed'
+        )
+        .eq('id', user.id)
+        .single();
 
       if (profileError) {
         throw profileError;
@@ -89,32 +87,42 @@ export default function StudentHomeScreen() {
         profile.full_name?.trim() || 'Student'
       );
 
-      // -----------------------------------------
-      // Load approved upcoming events
-      // -----------------------------------------
+      /*
+       * HOME PAGE EVENTS
+       *
+       * Keep approved events visible while:
+       * - upcoming
+       * - currently live
+       *
+       * Remove them only after their end time.
+       *
+       * Ordering by start_at automatically moves
+       * the remaining/new events upward.
+       */
+      const now = new Date().toISOString();
 
-      const { data: eventData, error: eventError } =
-        await supabase
-          .from('events')
-          .select(
-            `
-            id,
-            title,
-            description,
-            category,
-            location,
-            start_at,
-            end_at,
-            capacity,
-            image_url
-          `
-          )
-          .eq('status', 'approved')
-          .gte('start_at', new Date().toISOString())
-          .order('start_at', {
-            ascending: true,
-          })
-          .limit(6);
+      const {
+        data: eventData,
+        error: eventError,
+      } = await supabase
+        .from('events')
+        .select(`
+          id,
+          title,
+          description,
+          category,
+          location,
+          start_at,
+          end_at,
+          capacity,
+          image_url
+        `)
+        .eq('status', 'approved')
+        .gt('end_at', now)
+        .order('start_at', {
+          ascending: true,
+        })
+        .limit(6);
 
       if (eventError) {
         throw eventError;
@@ -146,37 +154,62 @@ export default function StudentHomeScreen() {
     });
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (
+    dateString: string
+  ) => {
     const date = new Date(dateString);
 
     return {
-      day: date.toLocaleDateString('en-IN', {
-        day: 'numeric',
-      }),
-      month: date.toLocaleDateString('en-IN', {
-        month: 'short',
-      }),
-      weekday: date.toLocaleDateString('en-IN', {
-        weekday: 'short',
-      }),
-      time: date.toLocaleTimeString('en-IN', {
-        hour: 'numeric',
-        minute: '2-digit',
-      }),
+      day: date.toLocaleDateString(
+        'en-IN',
+        {
+          day: 'numeric',
+        }
+      ),
+
+      month: date.toLocaleDateString(
+        'en-IN',
+        {
+          month: 'short',
+        }
+      ),
+
+      weekday: date.toLocaleDateString(
+        'en-IN',
+        {
+          weekday: 'short',
+        }
+      ),
+
+      time: date.toLocaleTimeString(
+        'en-IN',
+        {
+          hour: 'numeric',
+          minute: '2-digit',
+        }
+      ),
     };
   };
 
   const getGreeting = () => {
     const hour = new Date().getHours();
 
-    if (hour < 12) return 'Good morning';
-    if (hour < 17) return 'Good afternoon';
+    if (hour < 12) {
+      return 'Good morning';
+    }
+
+    if (hour < 17) {
+      return 'Good afternoon';
+    }
+
     return 'Good evening';
   };
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <SafeAreaView
+        style={styles.container}
+      >
         <View style={styles.loading}>
           <ActivityIndicator
             size="large"
@@ -188,7 +221,9 @@ export default function StudentHomeScreen() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView
+      style={styles.container}
+    >
       <ScrollView
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -200,9 +235,7 @@ export default function StudentHomeScreen() {
         }
         contentContainerStyle={styles.scroll}
       >
-        {/* ---------------------------------------
-            HEADER
-        --------------------------------------- */}
+        {/* HEADER */}
 
         <View style={styles.header}>
           <View style={styles.headerText}>
@@ -236,9 +269,7 @@ export default function StudentHomeScreen() {
           </Pressable>
         </View>
 
-        {/* ---------------------------------------
-            QUICK ACTIONS
-        --------------------------------------- */}
+        {/* QUICK ACTIONS */}
 
         <View style={styles.actions}>
           <Pressable
@@ -311,9 +342,7 @@ export default function StudentHomeScreen() {
           </Pressable>
         </View>
 
-        {/* ---------------------------------------
-            UPCOMING EVENTS
-        --------------------------------------- */}
+        {/* UPCOMING / LIVE EVENTS */}
 
         <View style={styles.sectionHeader}>
           <View>
@@ -352,8 +381,8 @@ export default function StudentHomeScreen() {
             </Text>
 
             <Text style={styles.emptyText}>
-              New approved campus events will appear
-              here.
+              New approved campus events will
+              appear here.
             </Text>
 
             <Pressable
@@ -363,7 +392,9 @@ export default function StudentHomeScreen() {
               }
             >
               <Text
-                style={styles.exploreButtonText}
+                style={
+                  styles.exploreButtonText
+                }
               >
                 Explore Events
               </Text>
@@ -388,12 +419,16 @@ export default function StudentHomeScreen() {
                     {date.day}
                   </Text>
 
-                  <Text style={styles.dateMonth}>
+                  <Text
+                    style={styles.dateMonth}
+                  >
                     {date.month}
                   </Text>
                 </View>
 
-                <View style={styles.eventContent}>
+                <View
+                  style={styles.eventContent}
+                >
                   <View
                     style={styles.eventTopRow}
                   >
@@ -421,7 +456,9 @@ export default function StudentHomeScreen() {
                     {event.title}
                   </Text>
 
-                  <View style={styles.eventInfo}>
+                  <View
+                    style={styles.eventInfo}
+                  >
                     <Ionicons
                       name="time-outline"
                       size={14}
@@ -438,7 +475,9 @@ export default function StudentHomeScreen() {
                     </Text>
                   </View>
 
-                  <View style={styles.eventInfo}>
+                  <View
+                    style={styles.eventInfo}
+                  >
                     <Ionicons
                       name="location-outline"
                       size={14}
@@ -460,10 +499,6 @@ export default function StudentHomeScreen() {
             );
           })
         )}
-
-        {/* ---------------------------------------
-            FOOTER
-        --------------------------------------- */}
 
         <View style={styles.footer}>
           <Text style={styles.footerText}>

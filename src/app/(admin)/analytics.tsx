@@ -1,378 +1,558 @@
-import { colors } from '@/theme/colors';
 import { Ionicons } from '@expo/vector-icons';
+import { useCallback, useEffect, useState } from 'react';
 import {
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 
-const eventPerformance = [
-  {
-    title: 'Campus Innovation Summit',
-    participants: 58,
-    capacity: 100,
-    rating: 4.8,
-  },
-  {
-    title: 'Coding Club Hack Night',
-    participants: 34,
-    capacity: 50,
-    rating: 4.6,
-  },
-  {
-    title: 'Annual Music Night',
-    participants: 0,
-    capacity: 300,
-    rating: 0,
-  },
-  {
-    title: 'Photography Workshop',
-    participants: 0,
-    capacity: 50,
-    rating: 0,
-  },
-];
+import { supabase } from '../../lib/supabase';
+import { colors } from '../../theme/colors';
 
-const monthlyData = [
-  { month: 'May', events: 8, registrations: 86 },
-  { month: 'Jun', events: 11, registrations: 124 },
-  { month: 'Jul', events: 9, registrations: 108 },
-  { month: 'Aug', events: 14, registrations: 156 },
-  { month: 'Sep', events: 17, registrations: 192 },
-];
+type MonthlyRegistration = {
+  month: string;
+  registrations: number;
+};
+
+type EventPerformance = {
+  id: string;
+  title: string;
+  participants: number;
+  capacity: number;
+  rating: number | null;
+};
+
+type AnalyticsData = {
+  total_events: number;
+  total_users: number;
+  total_registrations: number;
+  average_rating: number | null;
+  students: number;
+  organizers: number;
+  upcoming_events: number;
+  pending_approvals: number;
+  monthly_registrations: MonthlyRegistration[];
+  event_performance: EventPerformance[];
+};
+
+const EMPTY_ANALYTICS: AnalyticsData = {
+  total_events: 0,
+  total_users: 0,
+  total_registrations: 0,
+  average_rating: null,
+  students: 0,
+  organizers: 0,
+  upcoming_events: 0,
+  pending_approvals: 0,
+  monthly_registrations: [],
+  event_performance: [],
+};
 
 export default function AdminAnalytics() {
-  const maxRegistrations = Math.max(
-    ...monthlyData.map((item) => item.registrations)
+  const [analytics, setAnalytics] =
+    useState<AnalyticsData>(EMPTY_ANALYTICS);
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadAnalytics = useCallback(
+    async (isRefresh = false) => {
+      try {
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
+
+        setError('');
+
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (!session) {
+          throw new Error('You must be logged in.');
+        }
+
+        const { data, error: rpcError } =
+          await supabase.rpc(
+            'get_admin_analytics'
+          );
+
+        if (rpcError) {
+          throw rpcError;
+        }
+
+        let result: any = data;
+
+        // Supabase may return a JSON object
+        // or a single-row array depending on
+        // the generated client response.
+        if (Array.isArray(result)) {
+          result = result[0];
+        }
+
+        if (!result) {
+          setAnalytics(EMPTY_ANALYTICS);
+          return;
+        }
+
+        setAnalytics({
+          total_events:
+            Number(result.total_events ?? 0),
+
+          total_users:
+            Number(result.total_users ?? 0),
+
+          total_registrations:
+            Number(
+              result.total_registrations ?? 0
+            ),
+
+          average_rating:
+            result.average_rating === null ||
+            result.average_rating === undefined
+              ? null
+              : Number(result.average_rating),
+
+          students:
+            Number(result.students ?? 0),
+
+          organizers:
+            Number(result.organizers ?? 0),
+
+          upcoming_events:
+            Number(result.upcoming_events ?? 0),
+
+          pending_approvals:
+            Number(result.pending_approvals ?? 0),
+
+          monthly_registrations:
+            Array.isArray(
+              result.monthly_registrations
+            )
+              ? result.monthly_registrations.map(
+                  (item: any) => ({
+                    month: String(
+                      item.month ?? ''
+                    ),
+                    registrations: Number(
+                      item.registrations ?? 0
+                    ),
+                  })
+                )
+              : [],
+
+          event_performance:
+            Array.isArray(
+              result.event_performance
+            )
+              ? result.event_performance.map(
+                  (item: any) => ({
+                    id: String(
+                      item.id ?? ''
+                    ),
+                    title: String(
+                      item.title ?? 'Untitled Event'
+                    ),
+                    participants: Number(
+                      item.participants ?? 0
+                    ),
+                    capacity: Number(
+                      item.capacity ?? 0
+                    ),
+                    rating:
+                      item.rating === null ||
+                      item.rating === undefined
+                        ? null
+                        : Number(item.rating),
+                  })
+                )
+              : [],
+        });
+      } catch (err: any) {
+        console.error(
+          'Admin analytics error:',
+          err
+        );
+
+        setError(
+          err?.message ||
+            'Unable to load analytics.'
+        );
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    []
   );
 
-  return (
-    <View style={styles.screen}>
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.content}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerText}>
-            <Text style={styles.eyebrow}>ADMIN SPACE</Text>
+  useEffect(() => {
+    loadAnalytics();
+  }, [loadAnalytics]);
 
+  const maxRegistrations = Math.max(
+    ...analytics.monthly_registrations.map(
+      item => item.registrations
+    ),
+    1
+  );
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator
+          size="large"
+          color={colors.yellowDark}
+        />
+
+        <Text style={styles.loadingText}>
+          Loading analytics...
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() =>
+              loadAnalytics(true)
+            }
+            tintColor={colors.yellowDark}
+          />
+        }
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
+          <View>
             <Text style={styles.title}>
               Analytics
             </Text>
 
             <Text style={styles.subtitle}>
-              A platform-wide view of Campus Events.
+              Platform performance overview
             </Text>
           </View>
 
           <View style={styles.headerIcon}>
             <Ionicons
               name="bar-chart-outline"
-              size={23}
+              size={25}
               color={colors.navy}
             />
           </View>
         </View>
 
-        {/* Main metrics */}
-        <View style={styles.metricsGrid}>
-          <MetricCard
+        {error ? (
+          <View style={styles.errorCard}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={22}
+              color={colors.danger}
+            />
+
+            <View style={styles.errorContent}>
+              <Text style={styles.errorTitle}>
+                Couldn't load analytics
+              </Text>
+
+              <Text style={styles.errorText}>
+                {error}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+
+        {/* MAIN STATS */}
+
+        <View style={styles.grid}>
+          <StatCard
             icon="calendar-outline"
-            value="42"
             label="Total Events"
-            note="+12% this month"
+            value={analytics.total_events}
           />
 
-          <MetricCard
+          <StatCard
             icon="people-outline"
-            value="310"
             label="Total Users"
-            note="+18% this month"
+            value={analytics.total_users}
           />
 
-          <MetricCard
-            icon="person-add-outline"
-            value="192"
-            label="Registrations"
-            note="This month"
-          />
-
-          <MetricCard
-            icon="star-outline"
-            value="4.6"
-            label="Avg. Rating"
-            note="Across events"
-          />
-        </View>
-
-        {/* Platform overview */}
-        <SectionTitle
-          title="Platform overview"
-          subtitle="Current activity across the platform"
-        />
-
-        <View style={styles.overviewCard}>
-          <OverviewRow
-            icon="people-outline"
+          <StatCard
+            icon="person-outline"
             label="Students"
-            value="286"
-            detail="92% of users"
+            value={analytics.students}
           />
 
-          <OverviewRow
+          <StatCard
             icon="briefcase-outline"
             label="Organizers"
-            value="24"
-            detail="8% of users"
+            value={analytics.organizers}
           />
 
-          <OverviewRow
-            icon="time-outline"
-            label="Upcoming events"
-            value="17"
-            detail="Currently approved"
+          <StatCard
+            icon="ticket-outline"
+            label="Registrations"
+            value={
+              analytics.total_registrations
+            }
           />
 
-          <OverviewRow
-            icon="hourglass-outline"
-            label="Pending approvals"
-            value="5"
-            detail="Need review"
-            highlight
+          <StatCard
+            icon="star-outline"
+            label="Average Rating"
+            value={
+              analytics.average_rating === null
+                ? '—'
+                : analytics.average_rating.toFixed(1)
+            }
           />
         </View>
 
-        {/* Registration trend */}
-        <SectionTitle
-          title="Registration trend"
-          subtitle="Monthly platform registrations"
-        />
+        {/* EVENT STATUS */}
+
+        <SectionTitle title="Event Overview" />
+
+        <View style={styles.statusCard}>
+          <StatusRow
+            icon="calendar-outline"
+            label="Upcoming Events"
+            value={analytics.upcoming_events}
+          />
+
+          <View style={styles.divider} />
+
+          <StatusRow
+            icon="time-outline"
+            label="Pending Approvals"
+            value={analytics.pending_approvals}
+          />
+
+          <View style={styles.divider} />
+
+          <StatusRow
+            icon="people-outline"
+            label="Active Registrations"
+            value={
+              analytics.total_registrations
+            }
+          />
+        </View>
+
+        {/* MONTHLY REGISTRATIONS */}
+
+        <SectionTitle title="Registration Trends" />
 
         <View style={styles.chartCard}>
-          <View style={styles.chartHeader}>
-            <View>
-              <Text style={styles.chartNumber}>
-                192
-              </Text>
-
-              <Text style={styles.chartLabel}>
-                registrations in September
-              </Text>
-            </View>
-
-            <View style={styles.growthBadge}>
+          {analytics.monthly_registrations.length ===
+          0 ? (
+            <View style={styles.emptyChart}>
               <Ionicons
-                name="trending-up-outline"
-                size={14}
-                color={colors.success}
+                name="bar-chart-outline"
+                size={35}
+                color={colors.textMuted}
               />
 
-              <Text style={styles.growthText}>
-                +23%
+              <Text style={styles.emptyTitle}>
+                No registration data yet
+              </Text>
+
+              <Text style={styles.emptyText}>
+                Registration activity will appear
+                here as students register for events.
               </Text>
             </View>
-          </View>
+          ) : (
+            <View style={styles.chart}>
+              {analytics.monthly_registrations.map(
+                (item, index) => {
+                  const height =
+                    Math.max(
+                      (item.registrations /
+                        maxRegistrations) *
+                        145,
+                      item.registrations > 0
+                        ? 8
+                        : 3
+                    );
 
-          <View style={styles.chart}>
-            {monthlyData.map((item) => {
-              const height =
-                (item.registrations / maxRegistrations) * 125;
-
-              return (
-                <View
-                  key={item.month}
-                  style={styles.barColumn}
-                >
-                  <View style={styles.barArea}>
+                  return (
                     <View
-                      style={[
-                        styles.bar,
-                        { height },
-                      ]}
-                    />
-                  </View>
+                      key={`${item.month}-${index}`}
+                      style={styles.barColumn}
+                    >
+                      <Text
+                        style={styles.barValue}
+                      >
+                        {item.registrations}
+                      </Text>
 
-                  <Text style={styles.barValue}>
-                    {item.registrations}
-                  </Text>
+                      <View
+                        style={[
+                          styles.bar,
+                          {
+                            height,
+                          },
+                        ]}
+                      />
 
-                  <Text style={styles.month}>
-                    {item.month}
-                  </Text>
-                </View>
-              );
-            })}
-          </View>
+                      <Text
+                        style={styles.monthLabel}
+                      >
+                        {item.month}
+                      </Text>
+                    </View>
+                  );
+                }
+              )}
+            </View>
+          )}
         </View>
 
-        {/* Event performance */}
-        <SectionTitle
-          title="Event performance"
-          subtitle="Participation and feedback across events"
-        />
+        {/* EVENT PERFORMANCE */}
 
-        {eventPerformance.map((event) => {
-          const percentage =
-            event.capacity > 0
-              ? Math.round(
-                  (event.participants / event.capacity) * 100
-                )
-              : 0;
+        <SectionTitle title="Event Performance" />
 
-          return (
-            <View
-              key={event.title}
-              style={styles.performanceCard}
-            >
-              <View style={styles.performanceTop}>
-                <View style={styles.performanceIcon}>
-                  <Ionicons
-                    name="calendar-outline"
-                    size={19}
-                    color={colors.navy}
-                  />
-                </View>
+        <View style={styles.performanceCard}>
+          {analytics.event_performance.length ===
+          0 ? (
+            <View style={styles.emptyPerformance}>
+              <Ionicons
+                name="calendar-clear-outline"
+                size={32}
+                color={colors.textMuted}
+              />
 
-                <View style={styles.performanceTitle}>
-                  <Text
-                    style={styles.eventTitle}
-                    numberOfLines={2}
+              <Text style={styles.emptyTitle}>
+                No event performance data
+              </Text>
+            </View>
+          ) : (
+            analytics.event_performance.map(
+              (event, index) => {
+                const percentage =
+                  event.capacity > 0
+                    ? Math.min(
+                        Math.round(
+                          (event.participants /
+                            event.capacity) *
+                            100
+                        ),
+                        100
+                      )
+                    : 0;
+
+                return (
+                  <View
+                    key={event.id}
+                    style={[
+                      styles.eventPerformance,
+                      index <
+                        analytics
+                          .event_performance
+                          .length -
+                          1 &&
+                        styles.performanceBorder,
+                    ]}
                   >
-                    {event.title}
-                  </Text>
+                    <View style={styles.eventTopRow}>
+                      <View style={styles.eventNameBox}>
+                        <Text
+                          style={styles.eventTitle}
+                          numberOfLines={2}
+                        >
+                          {event.title}
+                        </Text>
 
-                  <Text style={styles.participantText}>
-                    {event.participants} / {event.capacity}{' '}
-                    participants
-                  </Text>
-                </View>
+                        <Text
+                          style={styles.eventParticipants}
+                        >
+                          {event.participants} /
+                          {event.capacity} participants
+                        </Text>
+                      </View>
 
-                {event.rating > 0 ? (
-                  <View style={styles.rating}>
-                    <Ionicons
-                      name="star"
-                      size={14}
-                      color={colors.yellowDark}
-                    />
+                      <View style={styles.ratingBox}>
+                        <Ionicons
+                          name="star"
+                          size={15}
+                          color={colors.yellowDark}
+                        />
 
-                    <Text style={styles.ratingText}>
-                      {event.rating.toFixed(1)}
+                        <Text
+                          style={styles.ratingText}
+                        >
+                          {event.rating === null
+                            ? '—'
+                            : event.rating.toFixed(1)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View
+                      style={styles.progressBackground}
+                    >
+                      <View
+                        style={[
+                          styles.progressFill,
+                          {
+                            width: `${percentage}%`,
+                          },
+                        ]}
+                      />
+                    </View>
+
+                    <Text style={styles.capacityText}>
+                      {percentage}% capacity filled
                     </Text>
                   </View>
-                ) : (
-                  <Text style={styles.notRated}>
-                    Upcoming
-                  </Text>
-                )}
-              </View>
-
-              <View style={styles.progressBackground}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      width: `${Math.min(
-                        percentage,
-                        100
-                      )}%`,
-                    },
-                  ]}
-                />
-              </View>
-
-              <Text style={styles.capacityText}>
-                {percentage}% capacity
-              </Text>
-            </View>
-          );
-        })}
-
-        {/* Insights */}
-        <SectionTitle
-          title="Platform insights"
-          subtitle="Useful signals from current activity"
-        />
-
-        <View style={styles.insightCard}>
-          <InsightRow
-            icon="trending-up-outline"
-            title="Participation is growing"
-            text="Registrations have increased consistently over the last few months."
-          />
-
-          <InsightRow
-            icon="star-outline"
-            title="Strong event satisfaction"
-            text="The platform currently maintains an average rating of 4.6 out of 5."
-          />
-
-          <InsightRow
-            icon="time-outline"
-            title="Reviews need attention"
-            text="There are currently pending event submissions waiting for Admin review."
-          />
+                );
+              }
+            )
+          )}
         </View>
 
-        {/* Admin note */}
-        <View style={styles.noteCard}>
-          <View style={styles.noteIcon}>
-            <Ionicons
-              name="shield-checkmark-outline"
-              size={19}
-              color={colors.navy}
-            />
-          </View>
-
-          <View style={styles.noteContent}>
-            <Text style={styles.noteTitle}>
-              Admin analytics
-            </Text>
-
-            <Text style={styles.noteText}>
-              These metrics represent platform-level activity.
-              Organizers only receive analytics for their own
-              events.
-            </Text>
-          </View>
-        </View>
+        <View style={styles.footerSpace} />
       </ScrollView>
     </View>
   );
 }
 
-function MetricCard({
+function StatCard({
   icon,
-  value,
   label,
-  note,
+  value,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
-  value: string;
   label: string;
-  note: string;
+  value: number | string;
 }) {
   return (
-    <View style={styles.metricCard}>
-      <View style={styles.metricIcon}>
+    <View style={styles.statCard}>
+      <View style={styles.statIcon}>
         <Ionicons
           name={icon}
-          size={18}
+          size={21}
           color={colors.navy}
         />
       </View>
 
-      <Text style={styles.metricValue}>
+      <Text style={styles.statValue}>
         {value}
       </Text>
 
-      <Text style={styles.metricLabel}>
+      <Text style={styles.statLabel}>
         {label}
-      </Text>
-
-      <Text style={styles.metricNote}>
-        {note}
       </Text>
     </View>
   );
@@ -380,506 +560,377 @@ function MetricCard({
 
 function SectionTitle({
   title,
-  subtitle,
 }: {
   title: string;
-  subtitle: string;
 }) {
   return (
-    <View style={styles.sectionHeader}>
-      <Text style={styles.sectionTitle}>
-        {title}
-      </Text>
-
-      <Text style={styles.sectionSubtitle}>
-        {subtitle}
-      </Text>
-    </View>
+    <Text style={styles.sectionTitle}>
+      {title}
+    </Text>
   );
 }
 
-function OverviewRow({
+function StatusRow({
   icon,
   label,
   value,
-  detail,
-  highlight = false,
 }: {
   icon: keyof typeof Ionicons.glyphMap;
   label: string;
-  value: string;
-  detail: string;
-  highlight?: boolean;
+  value: number;
 }) {
   return (
-    <View style={styles.overviewRow}>
-      <View style={styles.overviewLeft}>
-        <View style={styles.overviewIcon}>
+    <View style={styles.statusRow}>
+      <View style={styles.statusLeft}>
+        <View style={styles.statusIcon}>
           <Ionicons
             name={icon}
-            size={17}
+            size={19}
             color={colors.navy}
           />
         </View>
 
-        <Text style={styles.overviewLabel}>
+        <Text style={styles.statusLabel}>
           {label}
         </Text>
       </View>
 
-      <View style={styles.overviewRight}>
-        <Text
-          style={[
-            styles.overviewValue,
-            highlight && {
-              color: colors.warning,
-            },
-          ]}
-        >
-          {value}
-        </Text>
-
-        <Text style={styles.overviewDetail}>
-          {detail}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-function InsightRow({
-  icon,
-  title,
-  text,
-}: {
-  icon: keyof typeof Ionicons.glyphMap;
-  title: string;
-  text: string;
-}) {
-  return (
-    <View style={styles.insightRow}>
-      <View style={styles.insightIcon}>
-        <Ionicons
-          name={icon}
-          size={17}
-          color={colors.navy}
-        />
-      </View>
-
-      <View style={styles.insightContent}>
-        <Text style={styles.insightTitle}>
-          {title}
-        </Text>
-
-        <Text style={styles.insightText}>
-          {text}
-        </Text>
-      </View>
+      <Text style={styles.statusValue}>
+        {value}
+      </Text>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
+  container: {
     flex: 1,
     backgroundColor: colors.cream,
   },
 
   content: {
     padding: 20,
-    paddingTop: 58,
-    paddingBottom: 110,
+    paddingTop: 28,
+  },
+
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: colors.textSecondary,
   },
 
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 20,
-  },
-
-  headerText: {
-    flex: 1,
-    paddingRight: 10,
-  },
-
-  eyebrow: {
-    color: colors.yellowDark,
-    fontSize: 10.5,
-    fontWeight: '800',
-    letterSpacing: 1.5,
-    marginBottom: 4,
+    marginBottom: 22,
   },
 
   title: {
-    color: colors.navy,
-    fontSize: 27,
+    fontSize: 29,
     fontWeight: '800',
+    color: colors.navy,
   },
 
   subtitle: {
+    marginTop: 5,
+    fontSize: 14,
     color: colors.textSecondary,
-    fontSize: 12.5,
-    marginTop: 3,
   },
 
   headerIcon: {
-    width: 45,
-    height: 45,
+    width: 48,
+    height: 48,
     borderRadius: 15,
     backgroundColor: colors.yellow,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  metricsGrid: {
+  errorCard: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 25,
+    alignItems: 'flex-start',
+    backgroundColor: '#FDECEC',
+    borderWidth: 1,
+    borderColor: '#E9BABA',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 18,
   },
 
-  metricCard: {
-    width: '48.3%',
+  errorContent: {
+    flex: 1,
+    marginLeft: 10,
+  },
+
+  errorTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.danger,
+  },
+
+  errorText: {
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.textSecondary,
+  },
+
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+
+  statCard: {
+    width: '48%',
+    minHeight: 145,
     backgroundColor: colors.white,
-    borderRadius: 17,
-    padding: 14,
+    borderRadius: 18,
+    padding: 16,
     borderWidth: 1,
     borderColor: colors.border,
   },
 
-  metricIcon: {
-    width: 35,
-    height: 35,
-    borderRadius: 11,
-    backgroundColor: '#EEF1F6',
+  statIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: '#FFF1C9',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 9,
   },
 
-  metricValue: {
-    color: colors.navy,
-    fontSize: 23,
+  statValue: {
+    marginTop: 14,
+    fontSize: 25,
     fontWeight: '800',
+    color: colors.navy,
   },
 
-  metricLabel: {
-    color: colors.textSecondary,
-    fontSize: 10.5,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-
-  metricNote: {
-    color: colors.textMuted,
-    fontSize: 8.5,
+  statLabel: {
     marginTop: 4,
-  },
-
-  sectionHeader: {
-    marginBottom: 11,
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
   },
 
   sectionTitle: {
-    color: colors.navy,
-    fontSize: 17,
+    marginTop: 28,
+    marginBottom: 12,
+    fontSize: 18,
     fontWeight: '800',
+    color: colors.navy,
   },
 
-  sectionSubtitle: {
-    color: colors.textMuted,
-    fontSize: 10.5,
-    marginTop: 3,
-  },
-
-  overviewCard: {
+  statusCard: {
     backgroundColor: colors.white,
     borderRadius: 18,
-    padding: 14,
+    paddingHorizontal: 16,
     borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: 25,
   },
 
-  overviewRow: {
+  statusRow: {
+    minHeight: 66,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
   },
 
-  overviewLeft: {
+  statusLeft: {
     flexDirection: 'row',
     alignItems: 'center',
   },
 
-  overviewIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: '#F2F3F5',
+  statusIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 11,
+    backgroundColor: '#F1F3F7',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 9,
+    marginRight: 11,
   },
 
-  overviewLabel: {
-    color: colors.textSecondary,
-    fontSize: 11,
+  statusLabel: {
+    fontSize: 14,
     fontWeight: '600',
+    color: colors.text,
   },
 
-  overviewRight: {
-    alignItems: 'flex-end',
-  },
-
-  overviewValue: {
-    color: colors.navy,
-    fontSize: 15,
+  statusValue: {
+    fontSize: 18,
     fontWeight: '800',
+    color: colors.navy,
   },
 
-  overviewDetail: {
-    color: colors.textMuted,
-    fontSize: 8.5,
-    marginTop: 1,
+  divider: {
+    height: 1,
+    backgroundColor: colors.border,
   },
 
   chartCard: {
-    backgroundColor: colors.navy,
-    borderRadius: 20,
-    padding: 17,
-    marginBottom: 25,
-  },
-
-  chartHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  chartNumber: {
-    color: colors.white,
-    fontSize: 27,
-    fontWeight: '800',
-  },
-
-  chartLabel: {
-    color: '#AAB2C2',
-    fontSize: 9.5,
-    marginTop: 2,
-  },
-
-  growthBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#EAF5EE',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-  },
-
-  growthText: {
-    color: colors.success,
-    fontSize: 9.5,
-    fontWeight: '800',
-    marginLeft: 3,
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    padding: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
 
   chart: {
-    height: 180,
-    marginTop: 17,
+    height: 205,
     flexDirection: 'row',
     alignItems: 'flex-end',
     justifyContent: 'space-around',
+    paddingTop: 20,
   },
 
   barColumn: {
     flex: 1,
+    height: '100%',
     alignItems: 'center',
-  },
-
-  barArea: {
-    height: 125,
     justifyContent: 'flex-end',
-  },
-
-  bar: {
-    width: 24,
-    borderRadius: 7,
-    backgroundColor: colors.yellow,
+    marginHorizontal: 3,
   },
 
   barValue: {
-    color: '#C8CED9',
-    fontSize: 8,
-    marginTop: 5,
+    fontSize: 10,
+    fontWeight: '700',
+    color: colors.textSecondary,
+    marginBottom: 5,
   },
 
-  month: {
-    color: '#8993A7',
-    fontSize: 9,
-    marginTop: 4,
+  bar: {
+    width: 25,
+    maxHeight: 145,
+    borderTopLeftRadius: 8,
+    borderTopRightRadius: 8,
+    backgroundColor: colors.yellow,
+  },
+
+  monthLabel: {
+    marginTop: 8,
+    fontSize: 10,
+    fontWeight: '600',
+    color: colors.textMuted,
+  },
+
+  emptyChart: {
+    minHeight: 180,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 25,
+  },
+
+  emptyTitle: {
+    marginTop: 10,
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.navy,
+    textAlign: 'center',
+  },
+
+  emptyText: {
+    marginTop: 5,
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.textSecondary,
+    textAlign: 'center',
   },
 
   performanceCard: {
     backgroundColor: colors.white,
     borderRadius: 18,
-    padding: 14,
-    marginBottom: 10,
     borderWidth: 1,
     borderColor: colors.border,
+    overflow: 'hidden',
   },
 
-  performanceTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-
-  performanceIcon: {
-    width: 39,
-    height: 39,
-    borderRadius: 12,
-    backgroundColor: '#EEF1F6',
+  emptyPerformance: {
+    minHeight: 150,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 9,
   },
 
-  performanceTitle: {
+  eventPerformance: {
+    padding: 16,
+  },
+
+  performanceBorder: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+
+  eventTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+  },
+
+  eventNameBox: {
     flex: 1,
+    paddingRight: 12,
   },
 
   eventTitle: {
-    color: colors.navy,
-    fontSize: 11.5,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '800',
+    color: colors.navy,
   },
 
-  participantText: {
-    color: colors.textMuted,
-    fontSize: 9,
-    marginTop: 3,
+  eventParticipants: {
+    marginTop: 4,
+    fontSize: 11,
+    color: colors.textSecondary,
   },
 
-  rating: {
+  ratingBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF5DD',
+    gap: 4,
+    backgroundColor: '#FFF7DE',
     borderRadius: 9,
-    paddingHorizontal: 7,
+    paddingHorizontal: 8,
     paddingVertical: 5,
   },
 
   ratingText: {
-    color: colors.yellowDark,
-    fontSize: 9.5,
+    fontSize: 12,
     fontWeight: '800',
-    marginLeft: 3,
-  },
-
-  notRated: {
-    color: colors.textMuted,
-    fontSize: 8.5,
-    fontWeight: '600',
+    color: colors.navy,
   },
 
   progressBackground: {
-    height: 6,
-    borderRadius: 4,
-    backgroundColor: '#E9E7E0',
-    marginTop: 13,
+    height: 8,
+    marginTop: 14,
+    borderRadius: 5,
+    overflow: 'hidden',
+    backgroundColor: '#ECE9E0',
   },
 
   progressFill: {
-    height: 6,
-    borderRadius: 4,
+    height: '100%',
+    borderRadius: 5,
     backgroundColor: colors.yellow,
   },
 
   capacityText: {
+    marginTop: 6,
+    fontSize: 10,
     color: colors.textMuted,
-    fontSize: 8.5,
-    marginTop: 5,
-    textAlign: 'right',
   },
 
-  insightCard: {
-    backgroundColor: colors.white,
-    borderRadius: 18,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 14,
-  },
-
-  insightRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingVertical: 8,
-  },
-
-  insightIcon: {
-    width: 35,
-    height: 35,
-    borderRadius: 10,
-    backgroundColor: '#EEF1F6',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 9,
-  },
-
-  insightContent: {
-    flex: 1,
-  },
-
-  insightTitle: {
-    color: colors.navy,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-
-  insightText: {
-    color: colors.textSecondary,
-    fontSize: 9.5,
-    lineHeight: 14,
-    marginTop: 3,
-  },
-
-  noteCard: {
-    backgroundColor: '#FFF8E7',
-    borderRadius: 17,
-    padding: 13,
-    flexDirection: 'row',
-    borderWidth: 1,
-    borderColor: '#F0D99B',
-  },
-
-  noteIcon: {
-    width: 37,
-    height: 37,
-    borderRadius: 11,
-    backgroundColor: colors.yellow,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 9,
-  },
-
-  noteContent: {
-    flex: 1,
-  },
-
-  noteTitle: {
-    color: colors.navy,
-    fontSize: 11.5,
-    fontWeight: '800',
-    marginBottom: 3,
-  },
-
-  noteText: {
-    color: colors.textSecondary,
-    fontSize: 10.5,
-    lineHeight: 16,
+  footerSpace: {
+    height: 30,
   },
 });

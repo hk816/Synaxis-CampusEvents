@@ -12,6 +12,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
 
@@ -31,7 +32,7 @@ export default function RegisterScreen() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  const resetFields = () => {
+  const resetRoleFields = () => {
     setFullName('');
     setEmail('');
     setRollNumber('');
@@ -43,40 +44,96 @@ export default function RegisterScreen() {
     setConfirmPassword('');
   };
 
-  const changeRole = (newRole: Role) => {
+  const handleRoleChange = (newRole: Role) => {
     setRole(newRole);
-    resetFields();
+    resetRoleFields();
   };
 
   const validate = () => {
     if (!fullName.trim()) {
-      Alert.alert('Missing information', 'Please enter your full name.');
+      Alert.alert(
+        'Missing information',
+        'Please enter your full name.'
+      );
       return false;
     }
 
-    if (!email.trim()) {
-      Alert.alert('Missing information', 'Please enter your email address.');
+    const normalizedEmail =
+      email.trim().toLowerCase();
+
+    if (!normalizedEmail) {
+      Alert.alert(
+        'Missing information',
+        'Please enter your email address.'
+      );
       return false;
     }
 
-    if (!email.trim().includes('@')) {
-      Alert.alert('Invalid email', 'Please enter a valid email address.');
+    if (
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        normalizedEmail
+      )
+    ) {
+      Alert.alert(
+        'Invalid email',
+        'Please enter a valid email address.'
+      );
       return false;
+    }
+
+    // STUDENT EMAIL VALIDATION
+    if (role === 'student') {
+      if (
+        !normalizedEmail.endsWith(
+          '@woxsen.edu.in'
+        )
+      ) {
+        Alert.alert(
+          'Woxsen email required',
+          'Students must register using their Woxsen University Outlook email ending with @woxsen.edu.in.'
+        );
+        return false;
+      }
     }
 
     if (!department.trim()) {
-      Alert.alert('Missing information', 'Please enter your department.');
+      Alert.alert(
+        'Missing information',
+        'Please enter your department.'
+      );
       return false;
     }
 
     if (!phone.trim()) {
-      Alert.alert('Missing information', 'Please enter your phone number.');
+      Alert.alert(
+        'Missing information',
+        'Please enter your phone number.'
+      );
       return false;
     }
 
+    // STUDENT VALIDATION
     if (role === 'student') {
-      if (!rollNumber.trim()) {
-        Alert.alert('Missing information', 'Please enter your roll number.');
+      const rawRollNumber =
+        rollNumber.trim().toUpperCase();
+
+      if (!rawRollNumber) {
+        Alert.alert(
+          'Missing information',
+          'Please enter your roll number.'
+        );
+        return false;
+      }
+
+      if (
+        !/^\d{2}WU\d{7}$/.test(
+          rawRollNumber
+        )
+      ) {
+        Alert.alert(
+          'Invalid roll number',
+          'Enter your Woxsen roll number in the format 25WU0101060. The 3rd and 4th characters must be uppercase WU.'
+        );
         return false;
       }
 
@@ -89,7 +146,11 @@ export default function RegisterScreen() {
       }
     }
 
-    if (role === 'organizer' && !organization.trim()) {
+    // ORGANIZER VALIDATION
+    if (
+      role === 'organizer' &&
+      !organization.trim()
+    ) {
       Alert.alert(
         'Missing information',
         'Please enter your organization.'
@@ -116,140 +177,210 @@ export default function RegisterScreen() {
     return true;
   };
 
-  const handleStudentRegister = async () => {
-    /*
-     * Student registration now uses Supabase Auth directly.
-     *
-     * The database trigger creates the profiles row automatically.
-     */
+  // -----------------------------------------
+  // READ ACTUAL EDGE FUNCTION ERROR
+  // -----------------------------------------
+  const getFunctionErrorMessage = async (
+    error: any
+  ) => {
+    let message =
+      'Registration failed. Please try again.';
 
-    const normalizedEmail = email.trim().toLowerCase();
-    const normalizedRollNumber = rollNumber
-      .trim()
-      .toUpperCase();
+    try {
+      if (error?.context) {
+        const responseText =
+          await error.context.text();
 
-    const { data, error } = await supabase.auth.signUp({
-      email: normalizedEmail,
-      password,
-      options: {
-        data: {
-          full_name: fullName.trim(),
-          role: 'student',
-          roll_number: normalizedRollNumber,
-          department: department.trim(),
-          year_of_study: yearOfStudy.trim(),
-          phone: phone.trim(),
-        },
-      },
-    });
+        if (responseText) {
+          try {
+            const responseData =
+              JSON.parse(responseText);
 
-    if (error) {
-      console.error('Student signup error:', error);
-
-      let message = error.message;
-
-      if (
-        message.toLowerCase().includes('already registered') ||
-        message.toLowerCase().includes('already exists')
-      ) {
-        message =
-          'This email address is already registered. Please use another email or log in.';
+            if (responseData?.error) {
+              message =
+                responseData.error;
+            } else if (
+              responseData?.message
+            ) {
+              message =
+                responseData.message;
+            } else {
+              message = responseText;
+            }
+          } catch {
+            message = responseText;
+          }
+        }
+      } else if (error?.message) {
+        message = error.message;
       }
-
-      Alert.alert('Registration failed', message);
-      return;
-    }
-
-    if (!data.user) {
-      Alert.alert(
-        'Registration failed',
-        'The account could not be created. Please try again.'
-      );
-      return;
-    }
-
-    /*
-     * When email confirmation is enabled, Supabase normally
-     * returns a user without an active session.
-     */
-
-    Alert.alert(
-      'Check your email',
-      `Your student account has been created.\n\nA verification email has been sent to ${normalizedEmail}.\n\nPlease verify your email before logging in.`,
-      [
-        {
-          text: 'Go to Login',
-          onPress: () => router.replace('/login'),
-        },
-      ]
-    );
-  };
-
-  const handleOrganizerRegister = async () => {
-    /*
-     * Organizer registration remains on the existing Edge Function.
-     */
-
-    const { data, error } = await supabase.functions.invoke(
-      'organizer-register',
-      {
-        body: {
-          fullName: fullName.trim(),
-          email: email.trim().toLowerCase(),
-          department: department.trim(),
-          organization: organization.trim(),
-          phone: phone.trim(),
-          password,
-        },
-      }
-    );
-
-    if (error) {
+    } catch (parseError) {
       console.error(
-        'Organizer registration error:',
-        error
+        'Could not read Edge Function error:',
+        parseError
       );
 
-      Alert.alert(
-        'Registration failed',
-        error.message || 'Please try again.'
-      );
-      return;
+      if (error?.message) {
+        message = error.message;
+      }
     }
 
-    if (data?.error) {
-      Alert.alert(
-        'Registration failed',
-        data.error
-      );
-      return;
-    }
-
-    Alert.alert(
-      'Check your email',
-      `Your organizer account has been created.\n\nA verification email has been sent to ${email.trim()}.\n\nPlease verify your email before logging in.`,
-      [
-        {
-          text: 'Go to Login',
-          onPress: () => router.replace('/login'),
-        },
-      ]
-    );
+    return message;
   };
 
+  // -----------------------------------------
+  // REGISTER
+  // -----------------------------------------
   const handleRegister = async () => {
-    if (!validate()) {
-      return;
-    }
+    if (!validate()) return;
 
     setLoading(true);
 
     try {
+      // =========================================
+      // STUDENT REGISTRATION
+      // =========================================
       if (role === 'student') {
-        await handleStudentRegister();
-      } else {
-        await handleOrganizerRegister();
+        const { data, error } =
+          await supabase.functions.invoke(
+            'student-register',
+            {
+              body: {
+                fullName:
+                  fullName.trim(),
+
+                email:
+                  email.trim().toLowerCase(),
+
+                rollNumber:
+                  rollNumber
+                    .trim()
+                    .toUpperCase(),
+
+                department:
+                  department.trim(),
+
+                yearOfStudy:
+                  yearOfStudy.trim(),
+
+                phone:
+                  phone.trim(),
+
+                password,
+              },
+            }
+          );
+
+        if (error) {
+          console.error(
+            'Student registration error:',
+            error
+          );
+
+          const message =
+            await getFunctionErrorMessage(
+              error
+            );
+
+          Alert.alert(
+            'Registration failed',
+            message
+          );
+
+          return;
+        }
+
+        if (data?.error) {
+          Alert.alert(
+            'Registration failed',
+            data.error
+          );
+
+          return;
+        }
+
+        Alert.alert(
+          'Account created successfully',
+          'Your student account is ready. You can now log in using your roll number and password.',
+          [
+            {
+              text: 'Go to Login',
+              onPress: () =>
+                router.replace('/login'),
+            },
+          ]
+        );
+
+        return;
       }
+
+      // =========================================
+      // ORGANIZER REGISTRATION
+      // =========================================
+      const { data, error } =
+        await supabase.functions.invoke(
+          'organizer-register',
+          {
+            body: {
+              fullName:
+                fullName.trim(),
+
+              email:
+                email.trim().toLowerCase(),
+
+              department:
+                department.trim(),
+
+              organization:
+                organization.trim(),
+
+              phone:
+                phone.trim(),
+
+              password,
+            },
+          }
+        );
+
+      if (error) {
+        console.error(
+          'Organizer registration error:',
+          error
+        );
+
+        const message =
+          await getFunctionErrorMessage(
+            error
+          );
+
+        Alert.alert(
+          'Registration failed',
+          message
+        );
+
+        return;
+      }
+
+      if (data?.error) {
+        Alert.alert(
+          'Registration failed',
+          data.error
+        );
+
+        return;
+      }
+
+      Alert.alert(
+        'Account created successfully',
+        'Your organizer account is ready. You can now log in using your email and password.',
+        [
+          {
+            text: 'Go to Login',
+            onPress: () =>
+              router.replace('/login'),
+          },
+        ]
+      );
     } catch (error) {
       console.error(
         'Registration exception:',
@@ -277,10 +408,13 @@ export default function RegisterScreen() {
       }
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={
+          styles.scrollContent
+        }
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+        {/* HEADER */}
         <View style={styles.header}>
           <Text style={styles.brand}>
             Campus Events
@@ -295,6 +429,7 @@ export default function RegisterScreen() {
           </Text>
         </View>
 
+        {/* ROLE SELECTOR */}
         <View style={styles.roleContainer}>
           <Pressable
             style={[
@@ -303,7 +438,7 @@ export default function RegisterScreen() {
                 styles.roleButtonActive,
             ]}
             onPress={() =>
-              changeRole('student')
+              handleRoleChange('student')
             }
           >
             <Text
@@ -324,7 +459,7 @@ export default function RegisterScreen() {
                 styles.roleButtonActive,
             ]}
             onPress={() =>
-              changeRole('organizer')
+              handleRoleChange('organizer')
             }
           >
             <Text
@@ -339,6 +474,7 @@ export default function RegisterScreen() {
           </Pressable>
         </View>
 
+        {/* FORM */}
         <View style={styles.formCard}>
           <Text style={styles.sectionTitle}>
             {role === 'student'
@@ -346,6 +482,7 @@ export default function RegisterScreen() {
               : 'Organizer Registration'}
           </Text>
 
+          {/* FULL NAME */}
           <Text style={styles.label}>
             Full Name
           </Text>
@@ -361,15 +498,18 @@ export default function RegisterScreen() {
             autoCapitalize="words"
           />
 
+          {/* EMAIL */}
           <Text style={styles.label}>
-            Email Address
+            {role === 'student'
+              ? 'Woxsen University Email'
+              : 'Email Address'}
           </Text>
 
           <TextInput
             style={styles.input}
             placeholder={
               role === 'student'
-                ? 'Enter your college email'
+                ? 'yourname@woxsen.edu.in'
                 : 'Enter your email'
             }
             placeholderTextColor={
@@ -382,6 +522,7 @@ export default function RegisterScreen() {
             autoCorrect={false}
           />
 
+          {/* STUDENT ROLL NUMBER */}
           {role === 'student' && (
             <>
               <Text style={styles.label}>
@@ -390,7 +531,7 @@ export default function RegisterScreen() {
 
               <TextInput
                 style={styles.input}
-                placeholder="Enter your roll number"
+                placeholder="Example: 25WU0101060"
                 placeholderTextColor={
                   colors.textMuted
                 }
@@ -402,6 +543,7 @@ export default function RegisterScreen() {
             </>
           )}
 
+          {/* DEPARTMENT */}
           <Text style={styles.label}>
             Department
           </Text>
@@ -417,6 +559,7 @@ export default function RegisterScreen() {
             autoCapitalize="words"
           />
 
+          {/* YEAR OF STUDY */}
           {role === 'student' && (
             <>
               <Text style={styles.label}>
@@ -436,8 +579,9 @@ export default function RegisterScreen() {
             </>
           )}
 
+          {/* ORGANIZATION */}
           {role === 'organizer' && (
-            <>
+            <View>
               <Text style={styles.label}>
                 Organization
               </Text>
@@ -452,9 +596,10 @@ export default function RegisterScreen() {
                 onChangeText={setOrganization}
                 autoCapitalize="words"
               />
-            </>
+            </View>
           )}
 
+          {/* PHONE */}
           <Text style={styles.label}>
             Phone Number
           </Text>
@@ -470,6 +615,7 @@ export default function RegisterScreen() {
             keyboardType="phone-pad"
           />
 
+          {/* PASSWORD */}
           <Text style={styles.label}>
             Password
           </Text>
@@ -486,6 +632,7 @@ export default function RegisterScreen() {
             autoCapitalize="none"
           />
 
+          {/* CONFIRM PASSWORD */}
           <Text style={styles.label}>
             Confirm Password
           </Text>
@@ -502,35 +649,44 @@ export default function RegisterScreen() {
             autoCapitalize="none"
           />
 
+          {/* STUDENT INFORMATION */}
           {role === 'student' && (
             <View style={styles.infoBox}>
               <Text style={styles.infoTitle}>
-                Email verification required
+                Woxsen registration requirements
               </Text>
 
               <Text style={styles.infoText}>
-                A verification link will be sent
-                to your email. Verify your email
-                before logging in with your roll
-                number and password.
+                Students must use their Woxsen
+                University Outlook email ending
+                in @woxsen.edu.in.
+              </Text>
+
+              <Text
+                style={[
+                  styles.infoText,
+                  styles.infoTextSpacing,
+                ]}
+              >
+                Your account will be ready to
+                log in after registration.
+              </Text>
+
+              <Text
+                style={[
+                  styles.infoText,
+                  styles.infoTextSpacing,
+                ]}
+              >
+                Roll number format:{' '}
+                <Text style={styles.infoBold}>
+                  25WU0101060
+                </Text>
               </Text>
             </View>
           )}
 
-          {role === 'organizer' && (
-            <View style={styles.infoBox}>
-              <Text style={styles.infoTitle}>
-                Email verification required
-              </Text>
-
-              <Text style={styles.infoText}>
-                A verification link will be sent
-                to your email. Verify your email
-                before logging in.
-              </Text>
-            </View>
-          )}
-
+          {/* CREATE ACCOUNT */}
           <Pressable
             style={[
               styles.registerButton,
@@ -556,6 +712,7 @@ export default function RegisterScreen() {
           </Pressable>
         </View>
 
+        {/* LOGIN */}
         <View style={styles.loginRow}>
           <Text style={styles.loginText}>
             Already have an account?
@@ -567,8 +724,7 @@ export default function RegisterScreen() {
             }
           >
             <Text style={styles.loginLink}>
-              {' '}
-              Log in
+              {' '}Log in
             </Text>
           </Pressable>
         </View>
@@ -698,6 +854,15 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 18,
     color: colors.textSecondary,
+  },
+
+  infoTextSpacing: {
+    marginTop: 5,
+  },
+
+  infoBold: {
+    fontWeight: '800',
+    color: colors.navy,
   },
 
   registerButton: {

@@ -1,144 +1,256 @@
-import { colors } from '@/theme/colors';
 import { Ionicons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 
-type UserRole = 'Student' | 'Organizer';
+import { supabase } from '@/lib/supabase';
+import { colors } from '@/theme/colors';
 
-type User = {
-  id: number;
+type UserRole = 'student' | 'organizer';
+
+type Profile = {
+  id: string;
+  full_name: string | null;
+  role: UserRole;
+  department: string | null;
+  year_of_study: string | null;
+  organization: string | null;
+  designation: string | null;
+  profile_completed: boolean;
+};
+
+type DisplayUser = {
+  id: string;
   name: string;
   role: UserRole;
   department: string;
   year?: string;
-  events?: number;
-  status: 'Active' | 'Inactive';
+  organization?: string;
+  designation?: string;
+  events: number;
+  profileCompleted: boolean;
 };
-
-const users: User[] = [
-  {
-    id: 1,
-    name: 'Aarav Mehta',
-    role: 'Student',
-    department: 'Computer Science',
-    year: '3rd Year',
-    events: 6,
-    status: 'Active',
-  },
-  {
-    id: 2,
-    name: 'Diya Reddy',
-    role: 'Student',
-    department: 'Information Technology',
-    year: '2nd Year',
-    events: 4,
-    status: 'Active',
-  },
-  {
-    id: 3,
-    name: 'Rohan Kumar',
-    role: 'Student',
-    department: 'Electronics',
-    year: '3rd Year',
-    events: 8,
-    status: 'Active',
-  },
-  {
-    id: 4,
-    name: 'Sneha Rao',
-    role: 'Student',
-    department: 'Mechanical',
-    year: '4th Year',
-    events: 3,
-    status: 'Inactive',
-  },
-  {
-    id: 5,
-    name: 'Rahul Sharma',
-    role: 'Organizer',
-    department: 'Cultural Committee',
-    events: 8,
-    status: 'Active',
-  },
-  {
-    id: 6,
-    name: 'Priya Nair',
-    role: 'Organizer',
-    department: 'Technical Club',
-    events: 5,
-    status: 'Active',
-  },
-  {
-    id: 7,
-    name: 'Arjun Rao',
-    role: 'Organizer',
-    department: 'Music Club',
-    events: 3,
-    status: 'Active',
-  },
-  {
-    id: 8,
-    name: 'Kiran Kumar',
-    role: 'Organizer',
-    department: 'E-Cell',
-    events: 6,
-    status: 'Inactive',
-  },
-];
 
 const filters = ['All', 'Students', 'Organizers'];
 
 export default function AdminUsers() {
+  const [users, setUsers] = useState<DisplayUser[]>([]);
   const [activeFilter, setActiveFilter] = useState('All');
   const [search, setSearch] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  const loadUsers = useCallback(async () => {
+    try {
+      setErrorMessage('');
+
+      // Load real profiles.
+      const { data: profiles, error: profilesError } =
+        await supabase
+          .from('profiles')
+          .select(
+            'id, full_name, role, department, year_of_study, organization, designation, profile_completed'
+          )
+          .in('role', ['student', 'organizer'])
+          .order('full_name', {
+            ascending: true,
+          });
+
+      if (profilesError) {
+        throw profilesError;
+      }
+
+      const profileRows = (profiles ?? []) as Profile[];
+
+      /*
+       * Get registration counts for students.
+       * We count currently registered registrations.
+       */
+      const { data: registrations, error: registrationsError } =
+        await supabase
+          .from('event_registrations')
+          .select('student_id')
+          .eq('status', 'registered');
+
+      if (registrationsError) {
+        throw registrationsError;
+      }
+
+      /*
+       * Get event counts for organizers.
+       */
+      const { data: organizerEvents, error: eventsError } =
+        await supabase
+          .from('events')
+          .select('organizer_id');
+
+      if (eventsError) {
+        throw eventsError;
+      }
+
+      const studentRegistrationCounts =
+        new Map<string, number>();
+
+      (registrations ?? []).forEach((registration) => {
+        const studentId = registration.student_id;
+
+        studentRegistrationCounts.set(
+          studentId,
+          (studentRegistrationCounts.get(studentId) ?? 0) + 1
+        );
+      });
+
+      const organizerEventCounts =
+        new Map<string, number>();
+
+      (organizerEvents ?? []).forEach((event) => {
+        const organizerId = event.organizer_id;
+
+        organizerEventCounts.set(
+          organizerId,
+          (organizerEventCounts.get(organizerId) ?? 0) + 1
+        );
+      });
+
+      const displayUsers: DisplayUser[] =
+        profileRows.map((profile) => {
+          const isStudent = profile.role === 'student';
+
+          return {
+            id: profile.id,
+            name:
+              profile.full_name?.trim() ||
+              'Unnamed user',
+            role: profile.role,
+            department:
+              profile.department?.trim() ||
+              profile.organization?.trim() ||
+              'Not specified',
+            year:
+              profile.year_of_study?.trim() ||
+              undefined,
+            organization:
+              profile.organization?.trim() ||
+              undefined,
+            designation:
+              profile.designation?.trim() ||
+              undefined,
+            events: isStudent
+              ? studentRegistrationCounts.get(profile.id) ?? 0
+              : organizerEventCounts.get(profile.id) ?? 0,
+            profileCompleted:
+              profile.profile_completed,
+          };
+        });
+
+      setUsers(displayUsers);
+    } catch (error) {
+      console.error('Admin users error:', error);
+
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : 'Unable to load users.'
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
 
   const filteredUsers = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
     return users.filter((user) => {
       const matchesFilter =
         activeFilter === 'All' ||
         (activeFilter === 'Students' &&
-          user.role === 'Student') ||
+          user.role === 'student') ||
         (activeFilter === 'Organizers' &&
-          user.role === 'Organizer');
-
-      const query = search.toLowerCase();
+          user.role === 'organizer');
 
       const matchesSearch =
+        !query ||
         user.name.toLowerCase().includes(query) ||
-        user.department.toLowerCase().includes(query);
+        user.department.toLowerCase().includes(query) ||
+        (user.organization ?? '')
+          .toLowerCase()
+          .includes(query) ||
+        (user.designation ?? '')
+          .toLowerCase()
+          .includes(query);
 
       return matchesFilter && matchesSearch;
     });
-  }, [activeFilter, search]);
+  }, [users, activeFilter, search]);
 
   const students = users.filter(
-    (user) => user.role === 'Student'
+    (user) => user.role === 'student'
   ).length;
 
   const organizers = users.filter(
-    (user) => user.role === 'Organizer'
+    (user) => user.role === 'organizer'
   ).length;
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    loadUsers();
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingScreen}>
+        <ActivityIndicator
+          size="large"
+          color={colors.navy}
+        />
+
+        <Text style={styles.loadingText}>
+          Loading platform users...
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.navy}
+          />
+        }
       >
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.headerText}>
-            <Text style={styles.eyebrow}>ADMIN SPACE</Text>
-            <Text style={styles.title}>Users</Text>
+            <Text style={styles.eyebrow}>
+              ADMIN SPACE
+            </Text>
+
+            <Text style={styles.title}>
+              Users
+            </Text>
+
             <Text style={styles.subtitle}>
-              People on the platform.
+              People currently registered on the platform.
             </Text>
           </View>
 
@@ -151,12 +263,43 @@ export default function AdminUsers() {
           </View>
         </View>
 
+        {/* Error */}
+        {errorMessage ? (
+          <View style={styles.errorCard}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={22}
+              color={colors.danger}
+            />
+
+            <View style={styles.errorContent}>
+              <Text style={styles.errorTitle}>
+                Couldn't load users
+              </Text>
+
+              <Text style={styles.errorText}>
+                {errorMessage}
+              </Text>
+
+              <Pressable
+                onPress={loadUsers}
+                style={styles.retryButton}
+              >
+                <Text style={styles.retryText}>
+                  Try again
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
         {/* Overview */}
         <View style={styles.overviewCard}>
           <View style={styles.overviewItem}>
             <Text style={styles.overviewNumber}>
               {users.length}
             </Text>
+
             <Text style={styles.overviewLabel}>
               Total users
             </Text>
@@ -168,6 +311,7 @@ export default function AdminUsers() {
             <Text style={styles.overviewNumber}>
               {students}
             </Text>
+
             <Text style={styles.overviewLabel}>
               Students
             </Text>
@@ -179,6 +323,7 @@ export default function AdminUsers() {
             <Text style={styles.overviewNumber}>
               {organizers}
             </Text>
+
             <Text style={styles.overviewLabel}>
               Organizers
             </Text>
@@ -242,110 +387,151 @@ export default function AdminUsers() {
 
             <Text style={styles.sectionSubtitle}>
               {filteredUsers.length} user
-              {filteredUsers.length === 1 ? '' : 's'} shown
+              {filteredUsers.length === 1
+                ? ''
+                : 's'} shown
             </Text>
           </View>
         </View>
 
-        {/* User cards */}
-        {filteredUsers.map((user) => (
-          <View key={user.id} style={styles.userCard}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {user.name.charAt(0)}
-              </Text>
+        {/* Real users */}
+        {filteredUsers.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <View style={styles.emptyIcon}>
+              <Ionicons
+                name="people-outline"
+                size={24}
+                color={colors.navy}
+              />
             </View>
 
-            <View style={styles.userInfo}>
-              <View style={styles.nameRow}>
-                <Text
-                  style={styles.userName}
-                  numberOfLines={1}
-                >
-                  {user.name}
-                </Text>
+            <Text style={styles.emptyTitle}>
+              No users found
+            </Text>
 
-                <View
-                  style={[
-                    styles.statusBadge,
-                    user.status === 'Active'
-                      ? styles.activeBadge
-                      : styles.inactiveBadge,
-                  ]}
-                >
+            <Text style={styles.emptyText}>
+              Try changing the filter or search term.
+            </Text>
+          </View>
+        ) : (
+          filteredUsers.map((user) => (
+            <View
+              key={user.id}
+              style={styles.userCard}
+            >
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {user.name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+
+              <View style={styles.userInfo}>
+                <View style={styles.nameRow}>
+                  <Text
+                    style={styles.userName}
+                    numberOfLines={1}
+                  >
+                    {user.name}
+                  </Text>
+
                   <View
                     style={[
-                      styles.statusDot,
-                      user.status === 'Active'
-                        ? styles.activeDot
-                        : styles.inactiveDot,
-                    ]}
-                  />
-
-                  <Text
-                    style={[
-                      styles.statusText,
-                      user.status === 'Active'
-                        ? styles.activeText
-                        : styles.inactiveText,
+                      styles.statusBadge,
+                      user.profileCompleted
+                        ? styles.activeBadge
+                        : styles.incompleteBadge,
                     ]}
                   >
-                    {user.status}
-                  </Text>
-                </View>
-              </View>
+                    <View
+                      style={[
+                        styles.statusDot,
+                        user.profileCompleted
+                          ? styles.activeDot
+                          : styles.incompleteDot,
+                      ]}
+                    />
 
-              <View style={styles.roleRow}>
-                <View
-                  style={[
-                    styles.roleBadge,
-                    user.role === 'Student'
-                      ? styles.studentBadge
-                      : styles.organizerBadge,
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      user.role === 'Student'
-                        ? 'person-outline'
-                        : 'briefcase-outline'
-                    }
-                    size={11}
-                    color={colors.navy}
-                  />
-
-                  <Text style={styles.roleText}>
-                    {user.role}
-                  </Text>
-                </View>
-              </View>
-
-              <Text style={styles.department}>
-                {user.department}
-              </Text>
-
-              <View style={styles.metaRow}>
-                {user.year && (
-                  <>
-                    <Text style={styles.metaText}>
-                      {user.year}
+                    <Text
+                      style={[
+                        styles.statusText,
+                        user.profileCompleted
+                          ? styles.activeText
+                          : styles.incompleteText,
+                      ]}
+                    >
+                      {user.profileCompleted
+                        ? 'Profile complete'
+                        : 'Incomplete'}
                     </Text>
-                    <View style={styles.metaDot} />
-                  </>
-                )}
+                  </View>
+                </View>
 
-                <Text style={styles.metaText}>
-                  {user.events}{' '}
-                  {user.events === 1
-                    ? 'event'
-                    : 'events'}
+                <View style={styles.roleRow}>
+                  <View
+                    style={[
+                      styles.roleBadge,
+                      user.role === 'student'
+                        ? styles.studentBadge
+                        : styles.organizerBadge,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        user.role === 'student'
+                          ? 'person-outline'
+                          : 'briefcase-outline'
+                      }
+                      size={11}
+                      color={colors.navy}
+                    />
+
+                    <Text style={styles.roleText}>
+                      {user.role === 'student'
+                        ? 'Student'
+                        : 'Organizer'}
+                    </Text>
+                  </View>
+                </View>
+
+                <Text style={styles.department}>
+                  {user.department}
                 </Text>
+
+                {user.role === 'organizer' &&
+                  user.designation && (
+                    <Text style={styles.designation}>
+                      {user.designation}
+                    </Text>
+                  )}
+
+                <View style={styles.metaRow}>
+                  {user.year && (
+                    <>
+                      <Text style={styles.metaText}>
+                        {user.year}
+                      </Text>
+
+                      <View style={styles.metaDot} />
+                    </>
+                  )}
+
+                  <Text style={styles.metaText}>
+                    {user.events}{' '}
+                    {user.role === 'student'
+                      ? user.events === 1
+                        ? 'registration'
+                        : 'registrations'
+                      : user.events === 1
+                        ? 'event'
+                        : 'events'}
+                  </Text>
+                </View>
               </View>
             </View>
-          </View>
-        ))}
+          ))
+        )}
 
-        {/* Privacy / access note */}
+        {/* Privacy note */}
         <View style={styles.noteCard}>
           <View style={styles.noteIcon}>
             <Ionicons
@@ -361,7 +547,7 @@ export default function AdminUsers() {
             </Text>
 
             <Text style={styles.noteText}>
-              This user directory is only available to Admins.
+              This directory is available only to Admins.
               Students cannot access or view platform users.
             </Text>
           </View>
@@ -381,6 +567,19 @@ const styles = StyleSheet.create({
     padding: 20,
     paddingTop: 58,
     paddingBottom: 110,
+  },
+
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  loadingText: {
+    marginTop: 12,
+    fontSize: 13,
+    color: colors.textSecondary,
   },
 
   header: {
@@ -423,6 +622,45 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
+  errorCard: {
+    backgroundColor: '#FFF0F0',
+    borderRadius: 17,
+    padding: 14,
+    marginBottom: 16,
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#E9BABA',
+  },
+
+  errorContent: {
+    flex: 1,
+    marginLeft: 10,
+  },
+
+  errorTitle: {
+    color: colors.navy,
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+
+  errorText: {
+    color: colors.textSecondary,
+    fontSize: 10.5,
+    lineHeight: 16,
+    marginTop: 3,
+  },
+
+  retryButton: {
+    alignSelf: 'flex-start',
+    marginTop: 7,
+  },
+
+  retryText: {
+    color: colors.danger,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
   overviewCard: {
     backgroundColor: colors.navy,
     borderRadius: 20,
@@ -457,7 +695,7 @@ const styles = StyleSheet.create({
 
   searchBox: {
     height: 50,
-    backgroundColor: colors.white,
+    backgroundColor: colors.cream,
     borderRadius: 15,
     borderWidth: 1,
     borderColor: colors.border,
@@ -574,8 +812,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#EAF5EE',
   },
 
-  inactiveBadge: {
-    backgroundColor: '#F0F1F4',
+  incompleteBadge: {
+    backgroundColor: '#FFF5DD',
   },
 
   statusDot: {
@@ -589,12 +827,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.success,
   },
 
-  inactiveDot: {
-    backgroundColor: colors.textMuted,
+  incompleteDot: {
+    backgroundColor: colors.warning,
   },
 
   statusText: {
-    fontSize: 8.5,
+    fontSize: 8,
     fontWeight: '800',
   },
 
@@ -602,8 +840,8 @@ const styles = StyleSheet.create({
     color: colors.success,
   },
 
-  inactiveText: {
-    color: colors.textMuted,
+  incompleteText: {
+    color: colors.warning,
   },
 
   roleRow: {
@@ -640,6 +878,12 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
+  designation: {
+    color: colors.textMuted,
+    fontSize: 9.5,
+    marginTop: 3,
+  },
+
   metaRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -657,6 +901,39 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     backgroundColor: colors.textMuted,
     marginHorizontal: 6,
+  },
+
+  emptyCard: {
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    padding: 25,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 15,
+  },
+
+  emptyIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: '#EEF1F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  emptyTitle: {
+    color: colors.navy,
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 10,
+  },
+
+  emptyText: {
+    color: colors.textMuted,
+    fontSize: 10.5,
+    marginTop: 4,
+    textAlign: 'center',
   },
 
   noteCard: {

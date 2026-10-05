@@ -2,16 +2,16 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    Pressable,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -47,49 +47,29 @@ type ApprovalItem = Approval & {
 };
 
 const filters = [
-  {
-    key: 'pending',
-    label: 'Pending',
-  },
-  {
-    key: 'approved',
-    label: 'Approved',
-  },
-  {
-    key: 'rejected',
-    label: 'Rejected',
-  },
-  {
-    key: 'all',
-    label: 'All',
-  },
+  { key: 'pending', label: 'Pending' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'rejected', label: 'Rejected' },
+  { key: 'all', label: 'All' },
 ];
 
 function formatDate(dateString: string) {
-  return new Date(dateString).toLocaleDateString(
-    'en-IN',
-    {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-    }
-  );
+  return new Date(dateString).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
 }
 
 function formatTime(dateString: string) {
-  return new Date(dateString).toLocaleTimeString(
-    'en-IN',
-    {
-      hour: '2-digit',
-      minute: '2-digit',
-    }
-  );
+  return new Date(dateString).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default function AdminEventApprovalsScreen() {
-  const [items, setItems] = useState<ApprovalItem[]>(
-    []
-  );
+  const [items, setItems] = useState<ApprovalItem[]>([]);
   const [filter, setFilter] = useState('pending');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -105,10 +85,11 @@ export default function AdminEventApprovalsScreen() {
 
   const loadApprovals = async () => {
     try {
+      setLoading(true);
+
       let approvalQuery = supabase
         .from('event_approvals')
-        .select(
-          `
+        .select(`
           id,
           event_id,
           admin_id,
@@ -116,8 +97,7 @@ export default function AdminEventApprovalsScreen() {
           comments,
           reviewed_at,
           created_at
-        `
-        )
+        `)
         .order('created_at', {
           ascending: false,
         });
@@ -152,8 +132,7 @@ export default function AdminEventApprovalsScreen() {
         error: eventError,
       } = await supabase
         .from('events')
-        .select(
-          `
+        .select(`
           id,
           organizer_id,
           title,
@@ -165,8 +144,7 @@ export default function AdminEventApprovalsScreen() {
           capacity,
           status,
           rejection_reason
-        `
-        )
+        `)
         .in('id', eventIds);
 
       if (eventError) {
@@ -230,26 +208,16 @@ export default function AdminEventApprovalsScreen() {
             setActionLoading(true);
 
             try {
-              const {
-                data: { user },
-              } = await supabase.auth.getUser();
-
-              if (!user) {
-                throw new Error(
-                  'Admin session not found.'
+              const { error } =
+                await supabase.rpc(
+                  'admin_review_event',
+                  {
+                    p_event_id: item.event_id,
+                    p_decision: 'approved',
+                    p_comments:
+                      'Approved by administrator.',
+                  }
                 );
-              }
-
-              const { error } = await supabase
-                .from('event_approvals')
-                .update({
-                  status: 'approved',
-                  admin_id: user.id,
-                  comments:
-                    'Approved by administrator.',
-                  reviewed_at: new Date().toISOString(),
-                })
-                .eq('id', item.id);
 
               if (error) {
                 throw error;
@@ -282,7 +250,9 @@ export default function AdminEventApprovalsScreen() {
     );
   };
 
-  const openReject = (item: ApprovalItem) => {
+  const openReject = (
+    item: ApprovalItem
+  ) => {
     setRejectionReason('');
     setRejecting(item);
   };
@@ -292,7 +262,9 @@ export default function AdminEventApprovalsScreen() {
       return;
     }
 
-    if (!rejectionReason.trim()) {
+    const reason = rejectionReason.trim();
+
+    if (!reason) {
       Alert.alert(
         'Reason required',
         'Please provide a reason for rejecting this event.'
@@ -303,25 +275,15 @@ export default function AdminEventApprovalsScreen() {
     setActionLoading(true);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        throw new Error(
-          'Admin session not found.'
+      const { error } =
+        await supabase.rpc(
+          'admin_review_event',
+          {
+            p_event_id: rejecting.event_id,
+            p_decision: 'rejected',
+            p_comments: reason,
+          }
         );
-      }
-
-      const { error } = await supabase
-        .from('event_approvals')
-        .update({
-          status: 'rejected',
-          admin_id: user.id,
-          comments: rejectionReason.trim(),
-          reviewed_at: new Date().toISOString(),
-        })
-        .eq('id', rejecting.id);
 
       if (error) {
         throw error;
@@ -332,7 +294,7 @@ export default function AdminEventApprovalsScreen() {
 
       Alert.alert(
         'Event Rejected',
-        'The organizer will be able to see the rejection reason.'
+        'The rejection reason has been saved and the organizer has been notified.'
       );
 
       await loadApprovals();
@@ -470,7 +432,9 @@ export default function AdminEventApprovalsScreen() {
           <View style={styles.actions}>
             <Pressable
               style={styles.rejectButton}
-              onPress={() => openReject(item)}
+              onPress={() =>
+                openReject(item)
+              }
               disabled={actionLoading}
             >
               <Ionicons
@@ -486,7 +450,9 @@ export default function AdminEventApprovalsScreen() {
 
             <Pressable
               style={styles.approveButton}
-              onPress={() => approveEvent(item)}
+              onPress={() =>
+                approveEvent(item)
+              }
               disabled={actionLoading}
             >
               <Ionicons
@@ -587,20 +553,22 @@ export default function AdminEventApprovalsScreen() {
               </View>
 
               <Text style={styles.emptyTitle}>
-                No {filter === 'all' ? '' : filter}{' '}
+                No{' '}
+                {filter === 'all'
+                  ? ''
+                  : filter}{' '}
                 approvals
               </Text>
 
               <Text style={styles.emptyText}>
-                There are no event approval requests in
-                this category.
+                There are no event approval
+                requests in this category.
               </Text>
             </View>
           )
         }
       />
 
-      {/* Rejection Modal */}
       <Modal
         visible={!!rejecting}
         transparent
@@ -624,8 +592,8 @@ export default function AdminEventApprovalsScreen() {
             </Text>
 
             <Text style={styles.modalSubtitle}>
-              Please provide a reason. The organizer
-              will be able to see it.
+              Please provide a reason. The
+              organizer will be able to see it.
             </Text>
 
             <TextInput
@@ -633,7 +601,9 @@ export default function AdminEventApprovalsScreen() {
               value={rejectionReason}
               onChangeText={setRejectionReason}
               placeholder="Enter rejection reason..."
-              placeholderTextColor={colors.textMuted}
+              placeholderTextColor={
+                colors.textMuted
+              }
               multiline
               textAlignVertical="top"
             />
@@ -646,7 +616,9 @@ export default function AdminEventApprovalsScreen() {
                 }
                 disabled={actionLoading}
               >
-                <Text style={styles.modalCancelText}>
+                <Text
+                  style={styles.modalCancelText}
+                >
                   Cancel
                 </Text>
               </Pressable>
@@ -662,7 +634,9 @@ export default function AdminEventApprovalsScreen() {
                     color={colors.white}
                   />
                 ) : (
-                  <Text style={styles.modalRejectText}>
+                  <Text
+                    style={styles.modalRejectText}
+                  >
                     Reject Event
                   </Text>
                 )}
@@ -943,7 +917,8 @@ const styles = StyleSheet.create({
 
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(20, 33, 61, 0.45)',
+    backgroundColor:
+      'rgba(20, 33, 61, 0.45)',
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 22,

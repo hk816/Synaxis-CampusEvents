@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "CampusEvents",
+    "name": "Campus Events",
     "slug": "CampusEvents",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -8,9 +8,10 @@
     "scheme": "campusevents",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "bundleIdentifier": "com.hansika.campusevents"
     },
     "android": {
+      "package": "com.hansika.campusevents",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -32,11 +33,19 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }
-      ]
+      ],
+      "expo-image",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b61e75a3-40c8-455b-bc95-48c3e38df0f4"
+      }
     }
   }
 }

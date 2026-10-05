@@ -1,8 +1,13 @@
 import { Stack, router, usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Linking,
+  View,
+} from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { ToastProvider } from '../components/AppToast';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
 
@@ -13,7 +18,94 @@ export default function RootLayout() {
 
   const [checking, setChecking] = useState(true);
   const [role, setRole] = useState<Role | null>(null);
+  const [emailConfirmed, setEmailConfirmed] = useState(false);
 
+  // -----------------------------------------
+  // HANDLE EMAIL CONFIRMATION DEEP LINK
+  // -----------------------------------------
+  useEffect(() => {
+    let mounted = true;
+
+    const handleAuthUrl = async (url: string) => {
+      try {
+        if (!url.startsWith('campusevents://')) {
+          return;
+        }
+
+        console.log('Auth deep link received:', url);
+
+        const hashIndex = url.indexOf('#');
+
+        if (hashIndex === -1) {
+          console.log('No authentication hash found.');
+          return;
+        }
+
+        const hash = url.substring(hashIndex + 1);
+        const params = new URLSearchParams(hash);
+
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+
+        if (!accessToken || !refreshToken) {
+          console.log('No auth session found in deep link.');
+          return;
+        }
+
+        const { error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (error) {
+          console.error(
+            'Failed to establish session from confirmation link:',
+            error
+          );
+          return;
+        }
+
+        console.log('Email confirmation session established.');
+
+        if (mounted) {
+          setEmailConfirmed(true);
+          setChecking(false);
+
+          // Show the confirmation success page
+          router.replace('/verify-email');
+        }
+      } catch (error) {
+        console.error(
+          'Error handling authentication deep link:',
+          error
+        );
+      }
+    };
+
+    // App opened from the confirmation email
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleAuthUrl(url);
+      }
+    });
+
+    // App already running when confirmation link is opened
+    const subscription = Linking.addEventListener(
+      'url',
+      ({ url }) => {
+        handleAuthUrl(url);
+      }
+    );
+
+    return () => {
+      mounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  // -----------------------------------------
+  // CHECK CURRENT AUTH SESSION
+  // -----------------------------------------
   useEffect(() => {
     let mounted = true;
 
@@ -53,21 +145,22 @@ export default function RootLayout() {
         if (!session) {
           if (mounted) {
             setRole(null);
+            setChecking(false);
           }
           return;
         }
 
-        const { data: profile } =
-          await supabase
-            .from('profiles')
-            .select('role')
-            .eq('id', session.user.id)
-            .maybeSingle();
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', session.user.id)
+          .maybeSingle();
 
         if (mounted) {
           setRole(
             (profile?.role as Role) ?? null
           );
+          setChecking(false);
         }
       }
     );
@@ -78,6 +171,9 @@ export default function RootLayout() {
     };
   }, []);
 
+  // -----------------------------------------
+  // ROUTE PROTECTION
+  // -----------------------------------------
   useEffect(() => {
     if (checking) return;
 
@@ -85,10 +181,19 @@ export default function RootLayout() {
       '/',
       '/login',
       '/register',
+      '/verify-email',
     ];
 
     const isPublicRoute =
       publicRoutes.includes(pathname);
+
+    // Allow the email confirmation success page
+    if (
+      pathname === '/verify-email' &&
+      emailConfirmed
+    ) {
+      return;
+    }
 
     if (!role) {
       if (!isPublicRoute) {
@@ -99,8 +204,13 @@ export default function RootLayout() {
 
     if (
       pathname === '/login' ||
-      pathname === '/register'
+      pathname === '/register' ||
+      pathname === '/verify-email'
     ) {
+      if (emailConfirmed && pathname === '/verify-email') {
+        return;
+      }
+
       if (role === 'student') {
         router.replace('/student-home');
       } else if (role === 'organizer') {
@@ -112,10 +222,7 @@ export default function RootLayout() {
       return;
     }
 
-    // -----------------------------
     // STUDENT PROTECTION
-    // -----------------------------
-
     if (
       role === 'student' &&
       (
@@ -130,10 +237,7 @@ export default function RootLayout() {
       return;
     }
 
-    // -----------------------------
     // ORGANIZER PROTECTION
-    // -----------------------------
-
     if (
       role === 'organizer' &&
       (
@@ -146,10 +250,7 @@ export default function RootLayout() {
       return;
     }
 
-    // -----------------------------
     // ADMIN PROTECTION
-    // -----------------------------
-
     if (
       role === 'admin' &&
       (
@@ -164,6 +265,7 @@ export default function RootLayout() {
     pathname,
     role,
     checking,
+    emailConfirmed,
   ]);
 
   if (checking) {
@@ -188,11 +290,13 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <Stack
-        screenOptions={{
-          headerShown: false,
-        }}
-      />
+      <ToastProvider>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+          }}
+        />
+      </ToastProvider>
     </SafeAreaProvider>
   );
 }

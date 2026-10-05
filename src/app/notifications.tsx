@@ -1,138 +1,143 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { router } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    Pressable,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
 
-type NotificationItem = {
+type Notification = {
   id: string;
+  user_id: string;
+  event_id: string | null;
+  type: string;
   title: string;
   message: string;
-  type: string;
   is_read: boolean;
   created_at: string;
 };
 
 export default function NotificationsScreen() {
-  const [notifications, setNotifications] =
-    useState<NotificationItem[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
 
-  const loadNotifications = async () => {
+  const loadNotifications = useCallback(async () => {
     try {
-      setLoading(true);
+      setError('');
 
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
       if (!user) {
-        setNotifications([]);
+        router.replace('/login');
         return;
       }
 
-      const { data, error } = await supabase
+      const { data, error: notificationError } = await supabase
         .from('notifications')
         .select(
-          `
-          id,
-          title,
-          message,
-          type,
-          is_read,
-          created_at
-        `
+          'id, user_id, event_id, type, title, message, is_read, created_at'
         )
         .eq('user_id', user.id)
-        .order('created_at', {
-          ascending: false,
-        });
+        .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (notificationError) {
+        throw notificationError;
+      }
 
-      setNotifications(data ?? []);
-    } catch (error) {
-      console.error(
-        'Load notifications error:',
-        error
+      setNotifications((data ?? []) as Notification[]);
+    } catch (err: any) {
+      console.error('Notifications error:', err);
+
+      setError(
+        err?.message ?? 'Unable to load notifications.'
       );
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
+  }, []);
+
+  useEffect(() => {
+    loadNotifications();
+  }, [loadNotifications]);
+
+  const refresh = () => {
+    setRefreshing(true);
+    loadNotifications();
   };
 
-  useFocusEffect(
-    useCallback(() => {
-      loadNotifications();
-    }, [])
-  );
-
-  const markAsRead = async (
-    notification: NotificationItem
-  ) => {
+  /*
+   * Uses the secure backend RPC.
+   * A student cannot mark somebody else's notification as read.
+   */
+  const markAsRead = async (notification: Notification) => {
     if (notification.is_read) return;
 
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('id', notification.id);
+    const { error: rpcError } = await supabase.rpc(
+      'mark_notification_read',
+      {
+        p_notification_id: notification.id,
+      }
+    );
 
-      if (error) throw error;
-
-      setNotifications((current) =>
-        current.map((item) =>
-          item.id === notification.id
-            ? { ...item, is_read: true }
-            : item
-        )
-      );
-    } catch (error) {
+    if (rpcError) {
       console.error(
         'Mark notification read error:',
-        error
+        rpcError
       );
+      return;
     }
+
+    setNotifications((current) =>
+      current.map((item) =>
+        item.id === notification.id
+          ? { ...item, is_read: true }
+          : item
+      )
+    );
   };
 
+  /*
+   * Uses the secure backend RPC to mark all notifications
+   * belonging to the current user as read.
+   */
   const markAllAsRead = async () => {
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    const unreadCount = notifications.filter(
+      (notification) => !notification.is_read
+    ).length;
 
-      if (!user) return;
+    if (unreadCount === 0) return;
 
-      const { error } = await supabase
-        .from('notifications')
-        .update({ is_read: true })
-        .eq('user_id', user.id)
-        .eq('is_read', false);
+    const { error: rpcError } = await supabase.rpc(
+      'mark_all_notifications_read'
+    );
 
-      if (error) throw error;
-
-      setNotifications((current) =>
-        current.map((item) => ({
-          ...item,
-          is_read: true,
-        }))
-      );
-    } catch (error) {
+    if (rpcError) {
       console.error(
-        'Mark all notifications error:',
-        error
+        'Mark all notifications read error:',
+        rpcError
       );
+      return;
     }
+
+    setNotifications((current) =>
+      current.map((notification) => ({
+        ...notification,
+        is_read: true,
+      }))
+    );
   };
 
   const getIcon = (
@@ -146,186 +151,258 @@ export default function NotificationsScreen() {
         return 'time-outline';
 
       case 'event_approved':
-        return 'checkmark-done-outline';
+        return 'checkmark-done-circle-outline';
 
       case 'event_rejected':
         return 'close-circle-outline';
 
-      case 'event_update':
-        return 'calendar-outline';
-
       case 'feedback_required':
-        return 'star-outline';
+        return 'chatbubble-ellipses-outline';
+
+      case 'event_update':
+        return 'megaphone-outline';
 
       case 'resource_update':
-        return 'cube-outline';
+        return 'document-text-outline';
 
       default:
         return 'notifications-outline';
     }
   };
 
-  const formatTime = (dateString: string) => {
+  const getTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
     const now = new Date();
 
-    const diff =
-      now.getTime() - date.getTime();
-
-    const minutes = Math.floor(
-      diff / (1000 * 60)
+    const seconds = Math.floor(
+      (now.getTime() - date.getTime()) / 1000
     );
 
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60)
+    if (seconds < 60) return 'Just now';
+
+    const minutes = Math.floor(seconds / 60);
+
+    if (minutes < 60) {
       return `${minutes}m ago`;
+    }
 
-    const hours = Math.floor(
-      minutes / 60
-    );
+    const hours = Math.floor(minutes / 60);
 
-    if (hours < 24)
+    if (hours < 24) {
       return `${hours}h ago`;
+    }
 
-    const days = Math.floor(
-      hours / 24
-    );
+    const days = Math.floor(hours / 24);
 
-    if (days < 7)
+    if (days < 7) {
       return `${days}d ago`;
+    }
 
-    return date.toLocaleDateString(
-      'en-IN',
-      {
-        day: 'numeric',
-        month: 'short',
-      }
-    );
+    return date.toLocaleDateString();
+  };
+
+  const openNotification = async (
+    notification: Notification
+  ) => {
+    await markAsRead(notification);
+
+    if (!notification.event_id) {
+      return;
+    }
+
+    if (notification.type === 'feedback_required') {
+      router.push({
+        pathname: '/feedback',
+        params: {
+          eventId: notification.event_id,
+        },
+      });
+
+      return;
+    }
+
+    router.push({
+      pathname: '/event-details',
+      params: {
+        eventId: notification.event_id,
+      },
+    });
   };
 
   const unreadCount = notifications.filter(
-    (item) => !item.is_read
+    (notification) => !notification.is_read
   ).length;
 
-  const renderNotification = ({
-    item,
-  }: {
-    item: NotificationItem;
-  }) => (
-    <Pressable
-      style={[
-        styles.card,
-        !item.is_read && styles.unreadCard,
-      ]}
-      onPress={() => markAsRead(item)}
-    >
-      <View
-        style={[
-          styles.iconBox,
-          !item.is_read &&
-            styles.unreadIconBox,
-        ]}
-      >
-        <Ionicons
-          name={getIcon(item.type)}
-          size={21}
-          color={
-            !item.is_read
-              ? colors.navy
-              : colors.textSecondary
-          }
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator
+          size="large"
+          color={colors.navy}
         />
-      </View>
 
-      <View style={styles.content}>
-        <View style={styles.titleRow}>
-          <Text style={styles.notificationTitle}>
-            {item.title}
+        <Text style={styles.loadingText}>
+          Loading notifications...
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      {/* HEADER */}
+      <View style={styles.header}>
+        <Pressable
+          style={styles.backButton}
+          onPress={() => router.back()}
+        >
+          <Ionicons
+            name="arrow-back"
+            size={22}
+            color={colors.navy}
+          />
+        </Pressable>
+
+        <View style={styles.headerCenter}>
+          <Text style={styles.headerTitle}>
+            Notifications
           </Text>
 
-          {!item.is_read && (
-            <View style={styles.dot} />
+          {unreadCount > 0 && (
+            <View style={styles.countBadge}>
+              <Text style={styles.countText}>
+                {unreadCount}
+              </Text>
+            </View>
           )}
         </View>
 
-        <Text style={styles.message}>
-          {item.message}
-        </Text>
-
-        <Text style={styles.time}>
-          {formatTime(item.created_at)}
-        </Text>
-      </View>
-    </Pressable>
-  );
-
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>
-            UPDATES
-          </Text>
-
-          <Text style={styles.title}>
-            Notifications
-          </Text>
-        </View>
-
-        {unreadCount > 0 && (
+        {unreadCount > 0 ? (
           <Pressable
+            style={styles.markAllButton}
             onPress={markAllAsRead}
-            style={styles.readButton}
           >
-            <Text style={styles.readButtonText}>
-              Mark all read
+            <Text style={styles.markAllText}>
+              Mark all
             </Text>
           </Pressable>
+        ) : (
+          <View style={styles.headerSpacer} />
         )}
       </View>
 
-      {loading ? (
-        <View style={styles.center}>
-          <ActivityIndicator
-            size="large"
-            color={colors.yellowDark}
+      {/* ERROR */}
+      {error ? (
+        <Pressable
+          style={styles.errorBanner}
+          onPress={() => {
+            setError('');
+            loadNotifications();
+          }}
+        >
+          <Ionicons
+            name="alert-circle-outline"
+            size={21}
+            color={colors.danger}
           />
-        </View>
-      ) : (
-        <FlatList
-          data={notifications}
-          keyExtractor={(item) => item.id}
-          renderItem={renderNotification}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.list,
-            notifications.length === 0 &&
-              styles.emptyList,
-          ]}
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <View style={styles.emptyIcon}>
-                <Ionicons
-                  name="notifications-off-outline"
-                  size={30}
-                  color={colors.textSecondary}
-                />
+
+          <Text style={styles.errorText}>
+            {error}
+          </Text>
+
+          <Ionicons
+            name="refresh-outline"
+            size={19}
+            color={colors.danger}
+          />
+        </Pressable>
+      ) : null}
+
+      {/* NOTIFICATION LIST */}
+      <FlatList
+        data={notifications}
+        keyExtractor={(item) => item.id}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refresh}
+            tintColor={colors.navy}
+          />
+        }
+        contentContainerStyle={[
+          styles.listContent,
+          notifications.length === 0 &&
+            styles.emptyListContent,
+        ]}
+        renderItem={({ item }) => (
+          <Pressable
+            style={[
+              styles.notificationCard,
+              !item.is_read &&
+                styles.unreadNotification,
+            ]}
+            onPress={() => openNotification(item)}
+          >
+            {!item.is_read && (
+              <View style={styles.unreadDot} />
+            )}
+
+            <View style={styles.iconContainer}>
+              <Ionicons
+                name={getIcon(item.type)}
+                size={23}
+                color={colors.navy}
+              />
+            </View>
+
+            <View style={styles.notificationContent}>
+              <View style={styles.titleRow}>
+                <Text
+                  style={[
+                    styles.notificationTitle,
+                    !item.is_read &&
+                      styles.unreadTitle,
+                  ]}
+                  numberOfLines={2}
+                >
+                  {item.title}
+                </Text>
+
+                <Text style={styles.timeText}>
+                  {getTimeAgo(item.created_at)}
+                </Text>
               </View>
 
-              <Text style={styles.emptyTitle}>
-                You're all caught up
-              </Text>
-
-              <Text style={styles.emptyText}>
-                New event updates, registrations,
-                approvals and other notifications will
-                appear here.
+              <Text style={styles.message}>
+                {item.message}
               </Text>
             </View>
-          }
-        />
-      )}
-    </SafeAreaView>
+          </Pressable>
+        )}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <View style={styles.emptyIcon}>
+              <Ionicons
+                name="notifications-off-outline"
+                size={38}
+                color={colors.textMuted}
+              />
+            </View>
+
+            <Text style={styles.emptyTitle}>
+              No notifications yet
+            </Text>
+
+            <Text style={styles.emptyText}>
+              Event updates, registrations, approvals,
+              waitlist updates and feedback reminders will
+              appear here.
+            </Text>
+          </View>
+        }
+      />
+    </View>
   );
 }
 
@@ -335,126 +412,186 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
   },
 
-  header: {
-    paddingHorizontal: 22,
-    paddingTop: 10,
-    paddingBottom: 18,
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-  },
-
-  eyebrow: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1.2,
-    color: colors.textSecondary,
-  },
-
-  title: {
-    fontSize: 27,
-    fontWeight: '800',
-    color: colors.navy,
-    marginTop: 3,
-  },
-
-  readButton: {
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: colors.white,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-
-  readButtonText: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: colors.navy,
-  },
-
-  list: {
-    paddingHorizontal: 22,
-    paddingBottom: 30,
-  },
-
-  emptyList: {
-    flexGrow: 1,
-  },
-
-  card: {
-    backgroundColor: colors.white,
-    borderRadius: 17,
-    borderWidth: 1,
-    borderColor: colors.border,
-    padding: 14,
-    marginBottom: 11,
-    flexDirection: 'row',
-  },
-
-  unreadCard: {
-    borderColor: '#E8D7A7',
-    backgroundColor: '#FFFDF7',
-  },
-
-  iconBox: {
-    width: 45,
-    height: 45,
-    borderRadius: 14,
+  loadingContainer: {
+    flex: 1,
     backgroundColor: colors.cream,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  unreadIconBox: {
-    backgroundColor: colors.yellow,
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: colors.textSecondary,
   },
 
-  content: {
-    flex: 1,
-    marginLeft: 11,
-  },
-
-  titleRow: {
+  header: {
+    minHeight: 96,
+    paddingTop: 48,
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+    backgroundColor: colors.white,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
     flexDirection: 'row',
     alignItems: 'center',
   },
 
-  notificationTitle: {
-    flex: 1,
-    fontSize: 13,
-    fontWeight: '800',
-    color: colors.navy,
-  },
-
-  dot: {
-    width: 7,
-    height: 7,
-    borderRadius: 4,
-    backgroundColor: colors.yellowDark,
-    marginLeft: 7,
-  },
-
-  message: {
-    fontSize: 11,
-    lineHeight: 17,
-    color: colors.textSecondary,
-    marginTop: 4,
-  },
-
-  time: {
-    fontSize: 10,
-    color: colors.textMuted,
-    marginTop: 6,
-  },
-
-  center: {
-    flex: 1,
+  backButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: colors.cream,
     alignItems: 'center',
     justifyContent: 'center',
   },
 
-  empty: {
+  headerCenter: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 13,
+  },
+
+  headerTitle: {
+    fontSize: 23,
+    fontWeight: '800',
+    color: colors.navy,
+  },
+
+  countBadge: {
+    minWidth: 23,
+    height: 23,
+    paddingHorizontal: 7,
+    borderRadius: 12,
+    backgroundColor: colors.yellow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 8,
+  },
+
+  countText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: colors.navy,
+  },
+
+  markAllButton: {
+    paddingHorizontal: 7,
+    paddingVertical: 8,
+  },
+
+  markAllText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: colors.navy,
+  },
+
+  headerSpacer: {
+    width: 55,
+  },
+
+  errorBanner: {
+    marginHorizontal: 16,
+    marginTop: 14,
+    padding: 13,
+    borderRadius: 14,
+    backgroundColor: '#FDECEC',
+    borderWidth: 1,
+    borderColor: '#F1C2C2',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  errorText: {
+    flex: 1,
+    marginHorizontal: 9,
+    color: colors.danger,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+
+  listContent: {
+    padding: 16,
+    paddingBottom: 35,
+  },
+
+  emptyListContent: {
+    flexGrow: 1,
+  },
+
+  notificationCard: {
+    flexDirection: 'row',
+    backgroundColor: colors.white,
+    borderRadius: 17,
+    padding: 15,
+    marginBottom: 11,
+    borderWidth: 1,
+    borderColor: colors.border,
+    position: 'relative',
+  },
+
+  unreadNotification: {
+    borderColor: '#D8C98F',
+    backgroundColor: '#FFFDF6',
+  },
+
+  unreadDot: {
+    position: 'absolute',
+    top: 14,
+    left: 8,
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: colors.yellow,
+  },
+
+  iconContainer: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: '#FFF1C9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+
+  notificationContent: {
+    flex: 1,
+  },
+
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+
+  notificationTitle: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+    color: colors.text,
+  },
+
+  unreadTitle: {
+    fontWeight: '800',
+  },
+
+  timeText: {
+    marginLeft: 8,
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+
+  message: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 19,
+    color: colors.textSecondary,
+  },
+
+  emptyContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -462,26 +599,27 @@ const styles = StyleSheet.create({
   },
 
   emptyIcon: {
-    width: 66,
-    height: 66,
-    borderRadius: 22,
+    width: 78,
+    height: 78,
+    borderRadius: 39,
     backgroundColor: colors.white,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 15,
+    marginBottom: 17,
   },
 
   emptyTitle: {
-    fontSize: 19,
+    fontSize: 18,
     fontWeight: '800',
     color: colors.navy,
+    textAlign: 'center',
   },
 
   emptyText: {
-    fontSize: 12,
-    lineHeight: 18,
+    marginTop: 8,
+    fontSize: 13,
+    lineHeight: 20,
     color: colors.textSecondary,
     textAlign: 'center',
-    marginTop: 7,
   },
 });

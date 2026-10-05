@@ -95,6 +95,29 @@ export default function OrganizerLayout() {
           ),
         }}
       />
+
+      {/* Hidden from bottom navigation */}
+
+      <Tabs.Screen
+        name="feedback"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="edit-event"
+        options={{
+          href: null,
+        }}
+      />
+
+      <Tabs.Screen
+        name="send-event-update"
+        options={{
+          href: null,
+        }}
+      />
     </Tabs>
   );
 }

@@ -2,16 +2,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useToast } from '../components/AppToast';
 import { supabase } from '../lib/supabase';
 import { colors } from '../theme/colors';
 
@@ -29,6 +30,8 @@ type EventData = {
 };
 
 export default function EventDetailsScreen() {
+  const { showToast } = useToast();
+
   const { eventId } = useLocalSearchParams<{
     eventId?: string;
   }>();
@@ -204,24 +207,24 @@ export default function EventDetailsScreen() {
       if (result.status === 'registered') {
         setRegistrationStatus('registered');
 
-        Alert.alert(
-          'Registration successful',
+        showToast(
           result.message ??
-            'You are registered for this event.'
+            'You are registered for this event.',
+          'success'
         );
       } else if (result.status === 'waitlisted') {
         setRegistrationStatus('waitlisted');
 
-        Alert.alert(
-          'Added to waitlist',
+        showToast(
           result.message ??
-            'The event is full. You have been added to the waitlist.'
+            'The event is full. You have been added to the waitlist.',
+          'info'
         );
       } else {
-        Alert.alert(
-          'Registration',
+        showToast(
           result.message ??
-            'Your registration could not be completed.'
+            'Your registration could not be completed.',
+          'warning'
         );
       }
     } catch (error: any) {
@@ -275,10 +278,10 @@ export default function EventDetailsScreen() {
 
               setRegistrationStatus(null);
 
-              Alert.alert(
-                'Registration cancelled',
+              showToast(
                 result.message ??
-                  'Your registration has been cancelled.'
+                  'Your registration has been cancelled.',
+                'success'
               );
             } catch (error: any) {
               console.error(

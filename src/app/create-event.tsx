@@ -2,14 +2,14 @@ import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -27,6 +27,67 @@ const categories = [
   'Other',
 ];
 
+/**
+ * Converts YYYY-MM-DD HH:MM into a local Date.
+ *
+ * We do this manually instead of using:
+ * new Date("YYYY-MM-DD HH:MM")
+ *
+ * because string parsing can behave differently across
+ * browsers, Android and JavaScript runtimes.
+ */
+function parseDateTime(value: string): Date | null {
+  const match = value
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+
+  if (
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31 ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59
+  ) {
+    return null;
+  }
+
+  const date = new Date(
+    year,
+    month - 1,
+    day,
+    hour,
+    minute,
+    0,
+    0
+  );
+
+  // Make sure JavaScript did not silently roll the date over.
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day ||
+    date.getHours() !== hour ||
+    date.getMinutes() !== minute
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
 export default function CreateEventScreen() {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -39,6 +100,7 @@ export default function CreateEventScreen() {
   const [loading, setLoading] = useState(false);
 
   const handleCreateEvent = async () => {
+    // Required fields
     if (
       !title.trim() ||
       !description.trim() ||
@@ -54,6 +116,7 @@ export default function CreateEventScreen() {
       return;
     }
 
+    // Capacity validation
     const capacityNumber = Number(capacity);
 
     if (
@@ -67,20 +130,19 @@ export default function CreateEventScreen() {
       return;
     }
 
-    const startDate = new Date(startAt);
-    const endDate = new Date(endAt);
+    // Date/time validation
+    const startDate = parseDateTime(startAt);
+    const endDate = parseDateTime(endAt);
 
-    if (
-      Number.isNaN(startDate.getTime()) ||
-      Number.isNaN(endDate.getTime())
-    ) {
+    if (!startDate || !endDate) {
       Alert.alert(
         'Invalid date/time',
-        'Please enter valid date and time values.'
+        'Please use the exact format:\n\nYYYY-MM-DD HH:MM\n\nExample:\n2026-09-25 10:00'
       );
       return;
     }
 
+    // End must be after start
     if (endDate <= startDate) {
       Alert.alert(
         'Invalid event timing',
@@ -92,6 +154,7 @@ export default function CreateEventScreen() {
     setLoading(true);
 
     try {
+      // Get logged-in user
       const {
         data: { user },
         error: userError,
@@ -103,6 +166,7 @@ export default function CreateEventScreen() {
         );
       }
 
+      // Create event in Supabase
       const { data, error } = await supabase
         .from('events')
         .insert({
@@ -124,6 +188,8 @@ export default function CreateEventScreen() {
         throw error;
       }
 
+      console.log('Event created:', data);
+
       Alert.alert(
         'Event submitted',
         'Your event has been submitted successfully and is waiting for admin approval.',
@@ -136,8 +202,6 @@ export default function CreateEventScreen() {
           },
         ]
       );
-
-      return data;
     } catch (error) {
       console.error('Create event error:', error);
 
@@ -163,6 +227,7 @@ export default function CreateEventScreen() {
           <Pressable
             style={styles.backButton}
             onPress={() => router.back()}
+            disabled={loading}
           >
             <Ionicons
               name="arrow-back"
@@ -172,8 +237,13 @@ export default function CreateEventScreen() {
           </Pressable>
 
           <View style={styles.headerText}>
-            <Text style={styles.eyebrow}>ORGANIZER SPACE</Text>
-            <Text style={styles.title}>Create Event</Text>
+            <Text style={styles.eyebrow}>
+              ORGANIZER SPACE
+            </Text>
+
+            <Text style={styles.title}>
+              Create Event
+            </Text>
           </View>
         </View>
 
@@ -187,7 +257,9 @@ export default function CreateEventScreen() {
             Event Information
           </Text>
 
-          <Text style={styles.label}>Event Title *</Text>
+          <Text style={styles.label}>
+            Event Title *
+          </Text>
 
           <TextInput
             style={styles.input}
@@ -197,7 +269,9 @@ export default function CreateEventScreen() {
             placeholderTextColor={colors.textMuted}
           />
 
-          <Text style={styles.label}>Description *</Text>
+          <Text style={styles.label}>
+            Description *
+          </Text>
 
           <TextInput
             style={[styles.input, styles.textArea]}
@@ -209,7 +283,9 @@ export default function CreateEventScreen() {
             textAlignVertical="top"
           />
 
-          <Text style={styles.label}>Category *</Text>
+          <Text style={styles.label}>
+            Category *
+          </Text>
 
           <ScrollView
             horizontal
@@ -246,7 +322,9 @@ export default function CreateEventScreen() {
             Date & Location
           </Text>
 
-          <Text style={styles.label}>Location *</Text>
+          <Text style={styles.label}>
+            Location *
+          </Text>
 
           <TextInput
             style={styles.input}
@@ -264,9 +342,10 @@ export default function CreateEventScreen() {
             style={styles.input}
             value={startAt}
             onChangeText={setStartAt}
-            placeholder="2026-10-15 10:00"
+            placeholder="2026-09-25 10:00"
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
+            autoCorrect={false}
           />
 
           <Text style={styles.helperText}>
@@ -281,9 +360,10 @@ export default function CreateEventScreen() {
             style={styles.input}
             value={endAt}
             onChangeText={setEndAt}
-            placeholder="2026-10-15 13:00"
+            placeholder="2026-09-25 13:00"
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
+            autoCorrect={false}
           />
 
           <Text style={styles.helperText}>
@@ -333,6 +413,7 @@ export default function CreateEventScreen() {
             placeholder="Optional image URL"
             placeholderTextColor={colors.textMuted}
             autoCapitalize="none"
+            autoCorrect={false}
             keyboardType="url"
           />
         </View>
@@ -392,7 +473,9 @@ export default function CreateEventScreen() {
           onPress={() => router.back()}
           disabled={loading}
         >
-          <Text style={styles.cancelText}>Cancel</Text>
+          <Text style={styles.cancelText}>
+            Cancel
+          </Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

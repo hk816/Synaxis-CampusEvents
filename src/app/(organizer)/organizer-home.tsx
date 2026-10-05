@@ -1,18 +1,321 @@
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import {
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import EventCard from '@/components/event-card';
+import { supabase } from '@/lib/supabase';
 import { colors } from '@/theme/colors';
 
+type EventItem = {
+  id: string;
+  title: string;
+  description: string | null;
+  category: string | null;
+  location: string | null;
+  start_at: string;
+  end_at: string;
+  capacity: number | null;
+  status: string;
+  created_at: string;
+};
+
 export default function OrganizerHomeScreen() {
+  const [organizerName, setOrganizerName] = useState('Organizer');
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [totalEvents, setTotalEvents] = useState(0);
+  const [upcomingEvents, setUpcomingEvents] = useState(0);
+  const [pendingEvents, setPendingEvents] = useState(0);
+  const [participants, setParticipants] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadOrganizerHome();
+    }, [])
+  );
+
+  const loadOrganizerHome = async () => {
+    try {
+      setLoading(true);
+
+      // -----------------------------------------
+      // Get logged-in organizer
+      // -----------------------------------------
+
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        router.replace('/login');
+        return;
+      }
+
+      // -----------------------------------------
+      // Load organizer profile
+      // -----------------------------------------
+
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('full_name, role')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError) {
+        throw profileError;
+      }
+
+      if (profile.role !== 'organizer') {
+        if (profile.role === 'student') {
+          router.replace('/');
+        } else if (profile.role === 'admin') {
+          router.replace('/admin-home');
+        }
+
+        return;
+      }
+
+      setOrganizerName(profile.full_name?.trim() || 'Organizer');
+
+      // -----------------------------------------
+      // Load organizer's REAL events
+      // -----------------------------------------
+
+      const { data: eventData, error: eventError } = await supabase
+        .from('events')
+        .select(
+          `
+          id,
+          title,
+          description,
+          category,
+          location,
+          start_at,
+          end_at,
+          capacity,
+          status,
+          created_at
+          `
+        )
+        .eq('organizer_id', user.id)
+        .order('start_at', {
+          ascending: true,
+        });
+
+      if (eventError) {
+        throw eventError;
+      }
+
+      const organizerEvents = eventData ?? [];
+
+      setEvents(organizerEvents);
+      setTotalEvents(organizerEvents.length);
+
+      // -----------------------------------------
+      // Calculate upcoming events
+      // -----------------------------------------
+
+      const now = new Date();
+
+      const upcoming = organizerEvents.filter(
+        (event) =>
+          event.status === 'approved' &&
+          new Date(event.start_at) >= now
+      );
+
+      setUpcomingEvents(upcoming.length);
+
+      // -----------------------------------------
+      // Calculate pending events
+      // -----------------------------------------
+
+      const pending = organizerEvents.filter(
+        (event) => event.status === 'pending'
+      );
+
+      setPendingEvents(pending.length);
+
+      // -----------------------------------------
+      // Load participant count
+      // Only registrations for this organizer's events
+      // -----------------------------------------
+
+      if (organizerEvents.length > 0) {
+        const eventIds = organizerEvents.map((event) => event.id);
+
+        const { count: participantCount, error: participantError } =
+          await supabase
+            .from('event_registrations')
+            .select('id', {
+              count: 'exact',
+              head: true,
+            })
+            .in('event_id', eventIds)
+            .eq('status', 'registered');
+
+        if (participantError) {
+          console.error(
+            'Participant count error:',
+            participantError
+          );
+
+          setParticipants(0);
+        } else {
+          setParticipants(participantCount ?? 0);
+        }
+      } else {
+        setParticipants(0);
+      }
+    } catch (error) {
+      console.error('Organizer home error:', error);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  const refreshHome = async () => {
+    setRefreshing(true);
+    await loadOrganizerHome();
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+
+    return {
+      day: date.toLocaleDateString('en-IN', {
+        day: 'numeric',
+      }),
+      month: date.toLocaleDateString('en-IN', {
+        month: 'short',
+      }),
+      weekday: date.toLocaleDateString('en-IN', {
+        weekday: 'short',
+      }),
+      time: date.toLocaleTimeString('en-IN', {
+        hour: 'numeric',
+        minute: '2-digit',
+      }),
+    };
+  };
+
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return 'Pending approval';
+
+      case 'approved':
+        return 'Approved';
+
+      case 'rejected':
+        return 'Rejected';
+
+      case 'completed':
+        return 'Completed';
+
+      case 'cancelled':
+        return 'Cancelled';
+
+      case 'draft':
+        return 'Draft';
+
+      default:
+        return status;
+    }
+  };
+
+  const getStatusStyle = (status: string) => {
+    switch (status) {
+      case 'approved':
+        return styles.approvedBadge;
+
+      case 'rejected':
+        return styles.rejectedBadge;
+
+      case 'completed':
+        return styles.completedBadge;
+
+      case 'cancelled':
+        return styles.cancelledBadge;
+
+      default:
+        return styles.pendingBadge;
+    }
+  };
+
+  const getStatusTextStyle = (status: string) => {
+    switch (status) {
+      case 'approved':
+        return styles.approvedBadgeText;
+
+      case 'rejected':
+        return styles.rejectedBadgeText;
+
+      case 'completed':
+        return styles.completedBadgeText;
+
+      case 'cancelled':
+        return styles.cancelledBadgeText;
+
+      default:
+        return styles.pendingBadgeText;
+    }
+  };
+
+  const pendingEventList = events
+    .filter((event) => event.status === 'pending')
+    .sort(
+      (a, b) =>
+        new Date(b.created_at).getTime() -
+        new Date(a.created_at).getTime()
+    )
+    .slice(0, 3);
+
+  const upcomingEventList = events
+    .filter(
+      (event) =>
+        event.status === 'approved' &&
+        new Date(event.start_at) >= new Date()
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.start_at).getTime() -
+        new Date(b.start_at).getTime()
+    )
+    .slice(0, 3);
+
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loading}>
+          <ActivityIndicator
+            size="large"
+            color={colors.yellowDark}
+          />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView
       style={styles.container}
@@ -21,16 +324,31 @@ export default function OrganizerHomeScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refreshHome}
+            tintColor={colors.yellowDark}
+          />
+        }
       >
         {/* Header */}
+
         <View style={styles.header}>
-          <View>
+          <View style={styles.headerText}>
             <Text style={styles.spaceLabel}>
               ORGANIZER SPACE
             </Text>
 
             <Text style={styles.greeting}>
-              Good morning, Organizer
+              {getGreeting()},
+            </Text>
+
+            <Text
+              style={styles.organizerName}
+              numberOfLines={1}
+            >
+              {organizerName} 👋
             </Text>
           </View>
 
@@ -49,6 +367,7 @@ export default function OrganizerHomeScreen() {
         </View>
 
         {/* Overview */}
+
         <View style={styles.overviewCard}>
           <View style={styles.overviewTop}>
             <View>
@@ -76,28 +395,30 @@ export default function OrganizerHomeScreen() {
           </Text>
         </View>
 
-        {/* Stats */}
+        {/* Real Stats */}
+
         <View style={styles.statsRow}>
           <StatCard
-            number="8"
+            number={String(totalEvents)}
             label="Total Events"
             icon="calendar-outline"
           />
 
           <StatCard
-            number="3"
+            number={String(upcomingEvents)}
             label="Upcoming"
             icon="time-outline"
           />
 
           <StatCard
-            number="142"
+            number={String(participants)}
             label="Participants"
             icon="people-outline"
           />
         </View>
 
         {/* Create Event */}
+
         <Pressable
           style={styles.createButton}
           onPress={() =>
@@ -129,7 +450,8 @@ export default function OrganizerHomeScreen() {
           />
         </Pressable>
 
-        {/* Pending approval */}
+        {/* Pending Approval */}
+
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View>
@@ -144,43 +466,88 @@ export default function OrganizerHomeScreen() {
 
             <View style={styles.pendingBadge}>
               <Text style={styles.pendingBadgeText}>
-                1 Pending
+                {pendingEvents}{' '}
+                {pendingEvents === 1
+                  ? 'Pending'
+                  : 'Pending'}
               </Text>
             </View>
           </View>
 
-          <View style={styles.pendingCard}>
-            <View style={styles.pendingIcon}>
-              <Ionicons
-                name="hourglass-outline"
-                size={21}
-                color={colors.navy}
-              />
-            </View>
+          {pendingEventList.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <View style={styles.emptyIcon}>
+                <Ionicons
+                  name="checkmark-circle-outline"
+                  size={27}
+                  color={colors.success}
+                />
+              </View>
 
-            <View style={styles.pendingContent}>
-              <Text style={styles.pendingTitle}>
-                Annual Music Night
+              <Text style={styles.emptyTitle}>
+                No events awaiting approval
               </Text>
 
-              <Text style={styles.pendingText}>
-                Submitted for admin review
-              </Text>
-
-              <Text style={styles.pendingDate}>
-                Submitted September 10
+              <Text style={styles.emptyText}>
+                Events you submit will appear here until
+                an admin reviews them.
               </Text>
             </View>
+          ) : (
+            pendingEventList.map((event) => {
+              const date = formatDate(event.start_at);
 
-            <Ionicons
-              name="chevron-forward"
-              size={18}
-              color={colors.textMuted}
-            />
-          </View>
+              return (
+                <Pressable
+                  key={event.id}
+                  style={styles.pendingCard}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/event-details',
+                      params: {
+                        eventId: event.id,
+                      },
+                    })
+                  }
+                >
+                  <View style={styles.pendingIcon}>
+                    <Ionicons
+                      name="hourglass-outline"
+                      size={21}
+                      color={colors.navy}
+                    />
+                  </View>
+
+                  <View style={styles.pendingContent}>
+                    <Text
+                      style={styles.pendingTitle}
+                      numberOfLines={2}
+                    >
+                      {event.title}
+                    </Text>
+
+                    <Text style={styles.pendingText}>
+                      Submitted for admin review
+                    </Text>
+
+                    <Text style={styles.pendingDate}>
+                      {date.day} {date.month} · {date.time}
+                    </Text>
+                  </View>
+
+                  <Ionicons
+                    name="chevron-forward"
+                    size={18}
+                    color={colors.textMuted}
+                  />
+                </Pressable>
+              );
+            })
+          )}
         </View>
 
-        {/* Upcoming */}
+        {/* Upcoming Events */}
+
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <View>
@@ -204,28 +571,113 @@ export default function OrganizerHomeScreen() {
             </Pressable>
           </View>
 
-          <EventCard
-            title="Campus Innovation Summit"
-            category="Technology"
-            date="18"
-            month="SEP"
-            time="10:00 AM"
-            location="Main Auditorium"
-            status="upcoming"
-          />
+          {upcomingEventList.length === 0 ? (
+            <View style={styles.emptyCard}>
+              <View style={styles.emptyIcon}>
+                <Ionicons
+                  name="calendar-outline"
+                  size={27}
+                  color={colors.textSecondary}
+                />
+              </View>
 
-          <EventCard
-            title="Coding Club Hack Night"
-            category="Technology"
-            date="22"
-            month="SEP"
-            time="6:30 PM"
-            location="Computer Lab 2"
-            status="upcoming"
-          />
+              <Text style={styles.emptyTitle}>
+                No approved upcoming events
+              </Text>
+
+              <Text style={styles.emptyText}>
+                Once an admin approves your event, it
+                will appear here.
+              </Text>
+            </View>
+          ) : (
+            upcomingEventList.map((event) => {
+              const date = formatDate(event.start_at);
+
+              return (
+                <Pressable
+                  key={event.id}
+                  style={styles.eventCard}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/event-details',
+                      params: {
+                        eventId: event.id,
+                      },
+                    })
+                  }
+                >
+                  <View style={styles.dateBox}>
+                    <Text style={styles.dateDay}>
+                      {date.day}
+                    </Text>
+
+                    <Text style={styles.dateMonth}>
+                      {date.month}
+                    </Text>
+                  </View>
+
+                  <View style={styles.eventContent}>
+                    <View style={styles.eventTopRow}>
+                      <Text
+                        style={styles.category}
+                        numberOfLines={1}
+                      >
+                        {event.category ?? 'EVENT'}
+                      </Text>
+
+                      <View style={styles.approvedBadge}>
+                        <Text
+                          style={styles.approvedBadgeText}
+                        >
+                          APPROVED
+                        </Text>
+                      </View>
+                    </View>
+
+                    <Text
+                      style={styles.eventTitle}
+                      numberOfLines={2}
+                    >
+                      {event.title}
+                    </Text>
+
+                    <View style={styles.eventInfo}>
+                      <Ionicons
+                        name="time-outline"
+                        size={14}
+                        color={colors.textSecondary}
+                      />
+
+                      <Text style={styles.infoText}>
+                        {date.weekday}, {date.time}
+                      </Text>
+                    </View>
+
+                    <View style={styles.eventInfo}>
+                      <Ionicons
+                        name="location-outline"
+                        size={14}
+                        color={colors.textSecondary}
+                      />
+
+                      <Text
+                        style={styles.infoText}
+                        numberOfLines={1}
+                      >
+                        {event.location ??
+                          'Location TBA'}
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+              );
+            })
+          )}
         </View>
 
-        {/* Quick actions */}
+        {/* Quick Actions */}
+
         <View style={styles.section}>
           <Text style={styles.sectionEyebrow}>
             MANAGEMENT
@@ -256,7 +708,7 @@ export default function OrganizerHomeScreen() {
               icon="chatbubble-outline"
               title="Feedback"
               onPress={() =>
-                 router.push('/feedback')
+                router.push('/feedback')
               }
             />
 
@@ -352,9 +804,16 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cream,
   },
 
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
   content: {
     paddingHorizontal: 20,
     paddingTop: 14,
+    paddingBottom: 30,
   },
 
   header: {
@@ -362,6 +821,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 20,
+  },
+
+  headerText: {
+    flex: 1,
+    paddingRight: 15,
   },
 
   spaceLabel: {
@@ -373,7 +837,14 @@ const styles = StyleSheet.create({
   },
 
   greeting: {
-    fontSize: 23,
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.navy,
+  },
+
+  organizerName: {
+    fontSize: 25,
+    lineHeight: 31,
     fontWeight: '800',
     color: colors.navy,
   },
@@ -542,6 +1013,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     padding: 14,
+    marginBottom: 10,
   },
 
   pendingIcon: {
@@ -576,6 +1048,169 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 
+  eventCard: {
+    backgroundColor: colors.white,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 13,
+    marginBottom: 11,
+    flexDirection: 'row',
+  },
+
+  dateBox: {
+    width: 55,
+    height: 63,
+    borderRadius: 13,
+    backgroundColor: colors.yellow,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+
+  dateDay: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: colors.navy,
+    lineHeight: 24,
+  },
+
+  dateMonth: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.navy,
+    textTransform: 'uppercase',
+  },
+
+  eventContent: {
+    flex: 1,
+  },
+
+  eventTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+
+  category: {
+    flex: 1,
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    color: colors.yellowDark,
+    textTransform: 'uppercase',
+    marginRight: 7,
+  },
+
+  eventTitle: {
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+    color: colors.navy,
+    marginTop: 5,
+    marginBottom: 6,
+  },
+
+  eventInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 3,
+  },
+
+  infoText: {
+    flex: 1,
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginLeft: 5,
+  },
+
+  approvedBadge: {
+    backgroundColor: '#E5F4EA',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+
+  approvedBadgeText: {
+    color: colors.success,
+    fontSize: 7,
+    fontWeight: '800',
+  },
+
+  rejectedBadge: {
+    backgroundColor: '#FBE7E7',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+
+  rejectedBadgeText: {
+    color: colors.danger,
+    fontSize: 7,
+    fontWeight: '800',
+  },
+
+  completedBadge: {
+    backgroundColor: '#E8EDF5',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+
+  completedBadgeText: {
+    color: colors.navy,
+    fontSize: 7,
+    fontWeight: '800',
+  },
+
+  cancelledBadge: {
+    backgroundColor: '#FBE7E7',
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+
+  cancelledBadgeText: {
+    color: colors.danger,
+    fontSize: 7,
+    fontWeight: '800',
+  },
+
+  emptyCard: {
+    backgroundColor: colors.white,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 24,
+    alignItems: 'center',
+  },
+
+  emptyIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 18,
+    backgroundColor: colors.cream,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 11,
+  },
+
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.navy,
+    textAlign: 'center',
+  },
+
+  emptyText: {
+    fontSize: 10,
+    lineHeight: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 5,
+    maxWidth: 270,
+  },
+
   seeAll: {
     color: colors.navy,
     fontSize: 11,
@@ -586,7 +1221,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
-    marginTop: 2,
+    marginTop: 10,
   },
 
   quickCard: {
