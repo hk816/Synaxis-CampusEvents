@@ -1,21 +1,24 @@
-The MIT License (MIT)
 
-Copyright (c) 2015-present 650 Industries, Inc. (aka Expo)
+**Important:** Before publishing this, we'll verify the technology stack, implemented features, and project status against your actual source code. We shouldn't claim that a feature is implemented if it's only planned.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+### How to update it
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. Open your [Synaxis repository](https://github.com/hk816/CampusEvents).
+2. Click `README.md`.
+3. Click the pencil icon to edit.
+4. Replace the existing contents with the updated README.
+5. Enter the commit message: `Improve Synaxis project documentation`.
+6. Click **Commit changes**.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+### Step 2: Let's inspect `package.json`
+
+Before making more changes, we need to verify the technologies and dependencies used by your application.
+
+Open **`package.json`** in your repository and paste its contents here.
+
+I'll check:
+- Which technologies and libraries your project actually uses.
+- Whether the dependencies are appropriate.
+- Whether any important scripts or configuration details need attention.
+
+We'll improve Synaxis one step at a time without unnecessarily changing working code.
