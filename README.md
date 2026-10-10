@@ -35,6 +35,12 @@ The project aims to provide students and event organizers with a centralized pla
 1. Clone the repository.
 2. Navigate to the project directory.
 3. Install the dependencies.
+4. Create a local `.env` file in the project root.
+5. Add the following environment variables using your own Supabase project details:
+
+   ```env
+   EXPO_PUBLIC_SUPABASE_URL=your_supabase_project_url
+   EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
 
    ```bash
    npm install
