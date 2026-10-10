@@ -37,7 +37,19 @@ The project aims to provide students and event organizers with a centralized pla
 3. Install the dependencies.
 4. Create a local `.env` file in the project root.
 5. Add the following environment variables using your own Supabase project details:
+6. Start the Expo development server:
 
+   ```bash
+   npx expo start
+   ```
+
+7. Follow the Expo instructions to run the application on a compatible device or emulator.
+
+## Backend Configuration
+
+Synaxis uses Supabase for authentication and database operations. The required database tables, access policies, and Edge Functions must be configured in the corresponding Supabase project.
+
+Do not commit your actual `.env` file or any service-role keys.
    ```env
    EXPO_PUBLIC_SUPABASE_URL=your_supabase_project_url
    EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_supabase_publishable_key
