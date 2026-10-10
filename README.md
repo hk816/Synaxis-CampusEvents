@@ -21,7 +21,7 @@ The project aims to provide students and event organizers with a centralized pla
 - Supabase
 - PostgreSQL
 
-*Note: Confirm that each technology is used in the current implementation before publishing this README.*
+
 
 ## Getting Started
 
